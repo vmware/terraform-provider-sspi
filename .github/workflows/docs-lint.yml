@@ -16,7 +16,7 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Docs Lint
-        uses: DavidAnson/markdownlint-cli2-action@v19
+        uses: DavidAnson/markdownlint-cli2-action@v24
         with:
           config: '.markdownlint.jsonc'
           globs: |
