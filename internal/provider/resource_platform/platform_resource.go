@@ -820,6 +820,22 @@ func (r *PlatformResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	// Fetch the current revision so this PUT isn't rejected by the backend's
+	// optimistic-locking check (missing _revision -> 428, stale -> 412).
+	currentResp, err := r.client.GetPlatformConfigWithResponse(ctx, data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading current SSP Platform instance", err.Error())
+		return
+	}
+	if currentResp.JSON200 == nil {
+		resp.Diagnostics.AddError(
+			"Error reading current SSP Platform instance",
+			fmt.Sprintf("Unexpected response from API: %d", currentResp.StatusCode()),
+		)
+		return
+	}
+	updatePayload.UnderscoreRevision = currentResp.JSON200.UnderscoreRevision
+
 	updateResp, err := r.client.UpdatePlatformConfigWithResponse(ctx, data.ID.ValueString(), updatePayload)
 	if err != nil {
 		resp.Diagnostics.AddError(

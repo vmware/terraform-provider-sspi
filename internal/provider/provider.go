@@ -27,14 +27,23 @@ import (
 	"github.com/vmware/terraform-provider-sspi/internal/client/iam_client"
 	"github.com/vmware/terraform-provider-sspi/internal/client/upgrade_client"
 	datasource_bundle "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_bundle"
+	datasource_ldap_identity_sources "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_ldap_identity_sources"
 	datasource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_platform"
+	datasource_platforms "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_platforms"
+	datasource_role_bindings "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_role_bindings"
+	datasource_roles "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_roles"
+	datasource_users "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_users"
 	datasource_vsphere_provider "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_vsphere_provider"
+	datasource_vsphere_providers "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_vsphere_providers"
+	resource_backup "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup"
 	resource_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup_config"
 	resource_bundle_local "github.com/vmware/terraform-provider-sspi/internal/provider/resource_bundle_local"
 	resource_ldap_identity_source "github.com/vmware/terraform-provider-sspi/internal/provider/resource_ldap_identity_source"
 	resource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/resource_platform"
 	resource_provider "github.com/vmware/terraform-provider-sspi/internal/provider/resource_provider"
 	resource_recurring_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_recurring_backup_config"
+	resource_restore "github.com/vmware/terraform-provider-sspi/internal/provider/resource_restore"
+	resource_role_binding "github.com/vmware/terraform-provider-sspi/internal/provider/resource_role_binding"
 	resource_upgrade "github.com/vmware/terraform-provider-sspi/internal/provider/resource_upgrade"
 	resource_user_password "github.com/vmware/terraform-provider-sspi/internal/provider/resource_user_password"
 )
@@ -239,6 +248,9 @@ func (p *SspiProvider) Resources(ctx context.Context) []func() resource.Resource
 		resource_recurring_backup_config.NewRecurringBackupConfigResource,
 		resource_user_password.NewUserPasswordResource,
 		resource_upgrade.NewUpgradeResource,
+		resource_backup.NewBackupResource,
+		resource_restore.NewRestoreResource,
+		resource_role_binding.NewRoleBindingResource,
 	}
 }
 
@@ -247,6 +259,12 @@ func (p *SspiProvider) DataSources(ctx context.Context) []func() datasource.Data
 		datasource_vsphere_provider.NewVsphereProviderDataSource,
 		datasource_platform.NewPlatformDataSource,
 		datasource_bundle.NewBundleDataSource,
+		datasource_platforms.NewPlatformsDataSource,
+		datasource_vsphere_providers.NewVsphereProvidersDataSource,
+		datasource_ldap_identity_sources.NewLdapIdentitySourcesDataSource,
+		datasource_users.NewUsersDataSource,
+		datasource_roles.NewRolesDataSource,
+		datasource_role_bindings.NewRoleBindingsDataSource,
 	}
 }
 

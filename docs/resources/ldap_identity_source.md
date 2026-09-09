@@ -17,14 +17,16 @@ Manages an LDAP Identity Source for the Security Service Platform.
 
 - `admin_dn` (String) The Distinguished Name of the LDAP administrator.
 - `base_dn` (String) The Base Distinguished Name for LDAP searches.
+- `certificates` (List of String) PEM-encoded certificate(s) to trust when connecting to the LDAP server. Required by the API when creating an LDAP identity source.
 - `domain` (String) The domain name of the LDAP directory (e.g. broadcom.com).
 - `password` (String, Sensitive) The password for the LDAP administrator.
 - `server` (String) The IP address or FQDN of the LDAP server.
 
 ### Optional
 
+- `ldap_type` (String) The LDAP directory type: `ACTIVE_DIRECTORY` or `OPEN_LDAP`. Defaults to `ACTIVE_DIRECTORY`.
 - `port` (Number) The port number of the LDAP server.
-- `verify_ssl` (Boolean) Not currently supported: `apis/sspi/sspi-iam.yaml`'s `LdapIdentitySourceServer` schema has no SSL-verification field (only a `certificates` trust-anchor list), so this attribute is not sent to the API and has no effect. Retained only for schema compatibility.
+- `verify_ssl` (Boolean) Not currently supported: the `LdapIdentitySourceServer` schema has no SSL-verification field (only a `certificates` trust-anchor list), so this attribute is not sent to the API and has no effect. Retained only for schema compatibility.
 
 ### Read-Only
 

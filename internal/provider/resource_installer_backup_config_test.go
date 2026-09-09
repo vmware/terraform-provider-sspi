@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -49,6 +50,11 @@ func newBackupConfigMockServer(t *testing.T) *httptest.Server {
 		_ = json.Unmarshal(raw, &body)
 
 		m.mu.Lock()
+		rev := 1
+		if m.config.UnderscoreRevision != nil {
+			rev = *m.config.UnderscoreRevision + 1
+		}
+		body.UnderscoreRevision = &rev
 		m.config = body
 		cfg := m.config
 		m.mu.Unlock()
@@ -74,10 +80,10 @@ func newBackupConfigMockServer(t *testing.T) *httptest.Server {
 // refresh (which always echoes the API's protocol/port back into state)
 // doesn't disagree with the config for these Optional (non-Computed)
 // attributes.
-func testUnitBackupConfigConfig(host string) string {
-	return testUnitSSPIProviderConfig(host) + `
+func testUnitBackupConfigConfig(host, serverAddress string) string {
+	return testUnitSSPIProviderConfig(host) + fmt.Sprintf(`
 resource "sspi_installer_backup_config" "test" {
-  server_address  = "sftp.corp.local"
+  server_address  = %q
   protocol        = "SFTP"
   port            = 22
   username        = "backupuser"
@@ -85,12 +91,13 @@ resource "sspi_installer_backup_config" "test" {
   backup_location = "/backups"
   passphrase      = "s3cr3t-passphrase"
 }
-`
+`, serverAddress)
 }
 
 // TestUnitBackupConfigResource exercises ssp_installer_backup_config's
-// Create and Read against a mocked SSPI appliance API. This resource is a
-// singleton (id is always "singleton") with no create/delete API, only
+// Create, Read, and Update (server_address change, exercising the
+// _revision-aware PUT) against a mocked SSPI appliance API. This resource is
+// a singleton (id is always "singleton") with no create/delete API, only
 // get/put.
 func TestUnitBackupConfigResource(t *testing.T) {
 	srv := newBackupConfigMockServer(t)
@@ -99,12 +106,20 @@ func TestUnitBackupConfigResource(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testUnitBackupConfigConfig(srv.URL),
+				Config: testUnitBackupConfigConfig(srv.URL, "sftp.corp.local"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("sspi_installer_backup_config.test", "id", "singleton"),
 					resource.TestCheckResourceAttr("sspi_installer_backup_config.test", "server_address", "sftp.corp.local"),
 					resource.TestCheckResourceAttr("sspi_installer_backup_config.test", "username", "backupuser"),
 					resource.TestCheckResourceAttr("sspi_installer_backup_config.test", "backup_location", "/backups"),
+				),
+			},
+			// Update: change server_address; requires the mock's PUT handler
+			// to accept the _revision the resource fetched via GET beforehand.
+			{
+				Config: testUnitBackupConfigConfig(srv.URL, "sftp2.corp.local"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("sspi_installer_backup_config.test", "server_address", "sftp2.corp.local"),
 				),
 			},
 		},

@@ -239,6 +239,23 @@ func (r *RecurringBackupConfigResource) saveRecurringConfig(ctx context.Context,
 		}
 	}
 
+	// Fetch the current revision (if a recurring backup config already exists)
+	// so this PUT isn't rejected by the backend's optimistic-locking check; a
+	// 404 means no config exists yet, so the zero-value Revision is correct.
+	currentResp, err := r.client.GetRecurringBackupConfigWithResponse(ctx)
+	if err != nil {
+		diags.AddError("Error reading current Recurring Backup Configuration", "Could not read current recurring backup config: "+err.Error())
+		return
+	}
+	if currentResp.StatusCode() != http.StatusNotFound {
+		if currentResp.JSON200 == nil {
+			diags.AddError("Error reading current Recurring Backup Configuration",
+				fmt.Sprintf("Unexpected API response: %d: %s", currentResp.StatusCode(), string(currentResp.Body)))
+			return
+		}
+		body.UnderscoreRevision = currentResp.JSON200.UnderscoreRevision
+	}
+
 	updateResp, err := r.client.UpdateRecurringBackupConfigWithResponse(ctx, body)
 	if err != nil {
 		diags.AddError("Error saving Recurring Backup Configuration", "Could not save recurring backup config: "+err.Error())

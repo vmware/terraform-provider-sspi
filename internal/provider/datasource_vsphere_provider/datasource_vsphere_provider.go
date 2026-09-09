@@ -33,6 +33,8 @@ type VsphereProviderDataSourceModel struct {
 	Server      types.String `tfsdk:"server"`
 	User        types.String `tfsdk:"user"`
 	Certificate types.String `tfsdk:"certificate"`
+	State       types.String `tfsdk:"state"`
+	InstanceID  types.String `tfsdk:"instance_id"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
 }
@@ -59,6 +61,14 @@ func (d *VsphereProviderDataSource) Schema(ctx context.Context, req datasource.S
 			},
 			"certificate": schema.StringAttribute{
 				MarkdownDescription: "The certificate of the vCenter Server.",
+				Computed:            true,
+			},
+			"state": schema.StringAttribute{
+				MarkdownDescription: "JSON-encoded additional metadata about the provider, as reported by the API.",
+				Computed:            true,
+			},
+			"instance_id": schema.StringAttribute{
+				MarkdownDescription: "The instance ID of the vSphere provider in the SSPI appliance.",
 				Computed:            true,
 			},
 			"created_at": schema.StringAttribute{
@@ -137,6 +147,16 @@ func (d *VsphereProviderDataSource) Read(ctx context.Context, req datasource.Rea
 	data.User = types.StringValue(prov.User)
 	if prov.Certificate != nil {
 		data.Certificate = types.StringValue(*prov.Certificate)
+	}
+	if prov.State != nil {
+		data.State = types.StringValue(*prov.State)
+	} else {
+		data.State = types.StringNull()
+	}
+	if prov.InstanceId != nil {
+		data.InstanceID = types.StringValue(*prov.InstanceId)
+	} else {
+		data.InstanceID = types.StringNull()
 	}
 	if prov.UnderscoreCreateTime != nil {
 		data.CreatedAt = types.StringValue(time.UnixMilli(*prov.UnderscoreCreateTime).UTC().Format(time.RFC3339))

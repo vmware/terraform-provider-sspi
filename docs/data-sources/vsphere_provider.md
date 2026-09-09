@@ -21,6 +21,8 @@ Fetches details of a registered vSphere Provider in SSPI.
 
 - `certificate` (String) The certificate of the vCenter Server.
 - `created_at` (String) Resource creation time.
+- `instance_id` (String) The instance ID of the vSphere provider in the SSPI appliance.
 - `server` (String) The IP address or FQDN of the vCenter Server.
+- `state` (String) JSON-encoded additional metadata about the provider, as reported by the API.
 - `updated_at` (String) Resource last update time.
 - `user` (String) The username used to connect to vCenter.
