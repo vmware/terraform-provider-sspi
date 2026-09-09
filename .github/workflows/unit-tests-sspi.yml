@@ -1,0 +1,50 @@
+---
+name: Unit Tests (sspi)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/**'
+      - 'main.go'
+      - '.github/workflows/unit-tests-sspi.yml'
+  push:
+    branches:
+      - main
+      - 'branch_*'
+      - 'release-*'
+    paths:
+      - 'internal/**'
+      - 'main.go'
+      - '.github/workflows/unit-tests-sspi.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          go test ./internal/... -v -tags=unittest -count=1 -coverprofile=coverage.out -coverpkg=./internal/...
+          total_line=$(go tool cover -func=coverage.out | grep '^total:' || true)
+          pct=$(echo "$total_line" | grep -oE '[0-9]+\.[0-9]+%' | tail -1)
+          {
+            echo "## Unit test coverage"
+            echo ""
+            echo "Merged coverage: **${pct:-n/a}**"
+            echo ""
+            echo '```'
+            echo "$total_line"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=sspi unit test coverage::${pct:-n/a}"

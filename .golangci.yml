@@ -1,0 +1,63 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - gosec             # Checks for security issues in code.
+    - govet             # Examines code for possible mistakes.
+    - ineffassign       # Detects inefficient assignments.
+    - misspell          # Finds and fixes typos.
+    - staticcheck       # Reports bugs, code smells, and deprecated practices.
+    - unused            # Detects unused variables, constants, etc.
+  settings:
+    errcheck:
+      exclude-functions:
+        - github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema:ForceNew|Set
+        - fmt:.*
+        - io:Close
+    revive:
+      rules:
+        - name: unreachable-code      # Detect code that will never be executed.
+        - name: errorf                # Avoid string formatting in error messages.
+        - name: range                 # Improve range loop usage.
+        - name: superfluous-else       # Eliminate unnecessary else statements.
+        - name: var-declaration       # Simplify variable declaration.
+        - name: duplicated-imports    # Detect and remove duplicate imports.
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - staticcheck
+        text: SA4004|SA1019|GetOkExists
+      - linters:
+          - gosec
+        text: G402|G404|G115
+      - linters:
+          - staticcheck
+        text: QF1001
+      - linters:
+          - staticcheck
+        text: ST1005
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+run:
+  timeout: 30m
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

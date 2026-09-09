@@ -1,0 +1,16 @@
+# Ignore built binaries.
+terraform-provider-ssp*
+*.test
+
+# Ignore distribution directories.
+dist/
+
+# Ignore cursor & editor files.
+.cursor/
+.claude/
+.idea/
+.vscode/
+*~
+
+# Ignore macOS desktop services store files.
+**/.DS_Store

@@ -1,0 +1,41 @@
+---
+name: golangci-lint
+
+on:
+  pull_request:
+    paths-ignore:
+      - README.md
+  push:
+    branches:
+      - main
+      - 'branch_*'
+      - 'release-*'
+    paths-ignore:
+      - README.md
+  schedule:
+    - cron: '0 0 * * 0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Download Go Modules
+        run: go mod download
+      - name: Build
+        run: go build -v .
+      - name: Run Linters
+        uses: ./.github/actions/golangci-lint
+        with:
+          only-new-issues: true

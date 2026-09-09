@@ -1,0 +1,11 @@
+name: Feature Request
+description: Suggest an idea for the Terraform SSP Provider
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: Describe the feature or improvement you would like to see.
+    validations:
+      required: true
