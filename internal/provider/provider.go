@@ -29,12 +29,14 @@ import (
 	datasource_bundle "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_bundle"
 	datasource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_platform"
 	datasource_vsphere_provider "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_vsphere_provider"
+	resource_backup "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup"
 	resource_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup_config"
 	resource_bundle_local "github.com/vmware/terraform-provider-sspi/internal/provider/resource_bundle_local"
 	resource_ldap_identity_source "github.com/vmware/terraform-provider-sspi/internal/provider/resource_ldap_identity_source"
 	resource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/resource_platform"
 	resource_provider "github.com/vmware/terraform-provider-sspi/internal/provider/resource_provider"
 	resource_recurring_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_recurring_backup_config"
+	resource_restore "github.com/vmware/terraform-provider-sspi/internal/provider/resource_restore"
 	resource_upgrade "github.com/vmware/terraform-provider-sspi/internal/provider/resource_upgrade"
 	resource_user_password "github.com/vmware/terraform-provider-sspi/internal/provider/resource_user_password"
 )
@@ -239,6 +241,8 @@ func (p *SspiProvider) Resources(ctx context.Context) []func() resource.Resource
 		resource_recurring_backup_config.NewRecurringBackupConfigResource,
 		resource_user_password.NewUserPasswordResource,
 		resource_upgrade.NewUpgradeResource,
+		resource_backup.NewBackupResource,
+		resource_restore.NewRestoreResource,
 	}
 }
 

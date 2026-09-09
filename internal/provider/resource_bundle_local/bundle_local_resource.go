@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -22,6 +23,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/vmware/terraform-provider-sspi/internal/client/depot_client"
+)
+
+// bundlePollInterval and bundlePollTimeout are vars, not consts, so unit
+// tests in this package can temporarily shrink them (save/restore) to
+// exercise the multi-iteration polling loop and deadline logic in
+// waitForBundleReady in milliseconds instead of the real 15s/90min
+// production values.
+var (
+	bundlePollInterval = 15 * time.Second
+	bundlePollTimeout  = 90 * time.Minute
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -199,12 +210,62 @@ func (r *BundleLocalResource) Create(ctx context.Context, req resource.CreateReq
 	data.Status = types.StringValue("UPLOADED")
 	tflog.Trace(ctx, "Uploaded local SSPI bundle", map[string]interface{}{"id": data.ID.ValueString()})
 
+	// The upload is async: file validation/extraction happens server-side
+	// after the 202 response, with the bundle's status field settling to a
+	// terminal state (READY, or a failure state). Wait for that before
+	// reporting Create() success, so a downstream sspi_platform.ssp_bundle_id
+	// reference in the same apply doesn't race a still-validating bundle.
+	status, waitErr := r.waitForBundleReady(ctx, data.ID.ValueString())
+	if status != nil {
+		data.Status = types.StringValue(string(*status))
+	}
+
 	// Re-read to resolve the version (and confirm/refresh status and package_id)
 	// now that the bundle exists, instead of leaving those Computed attributes
 	// as guesses.
 	r.readBundle(ctx, &data, &resp.Diagnostics)
 
+	// Persist state now, regardless of the poll outcome: the bundle was
+	// genuinely created server-side, so losing track of its ID here would
+	// cause the next apply to upload a second, duplicate/orphaned bundle.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if waitErr != nil {
+		resp.Diagnostics.AddError("Bundle upload did not complete successfully", waitErr.Error())
+	}
+}
+
+// waitForBundleReady polls GET /sspi/bundles/{id} until the bundle's status
+// reaches a terminal state, returning an error if it failed.
+func (r *BundleLocalResource) waitForBundleReady(ctx context.Context, id string) (*depot_client.BundleStatus, error) {
+	deadline := time.Now().Add(bundlePollTimeout)
+	for {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out after %s waiting for bundle %s to become ready", bundlePollTimeout, id)
+		}
+
+		readResp, err := r.client.GetBundleWithResponse(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("error polling status for bundle %s: %w", id, err)
+		}
+		if readResp.JSON200 == nil {
+			return nil, fmt.Errorf("unexpected empty response polling status for bundle %s (HTTP %d)", id, readResp.StatusCode())
+		}
+
+		if status := readResp.JSON200.Status; status != nil && *status != depot_client.INPROGRESS {
+			switch *status {
+			case depot_client.FAILED, depot_client.ERROR, depot_client.CANCELLED:
+				return status, fmt.Errorf("bundle %s upload ended in status %s", id, *status)
+			default:
+				return status, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(bundlePollInterval):
+		}
+	}
 }
 
 func (r *BundleLocalResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

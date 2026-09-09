@@ -21,6 +21,16 @@ import (
 	"github.com/vmware/terraform-provider-sspi/internal/client/api_client"
 )
 
+// providerPollInterval and providerPollTimeout are vars, not consts, so unit
+// tests in this package can temporarily shrink them (save/restore) to
+// exercise the multi-iteration polling loop and deadline logic in
+// waitForProviderStatus in milliseconds instead of the real 15s/90min
+// production values.
+var (
+	providerPollInterval = 15 * time.Second
+	providerPollTimeout  = 90 * time.Minute
+)
+
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &ProviderResource{}
 var _ resource.ResourceWithImportState = &ProviderResource{}
@@ -41,6 +51,8 @@ type ProviderResourceModel struct {
 	User        types.String `tfsdk:"user"`
 	Password    types.String `tfsdk:"password"`
 	Certificate types.String `tfsdk:"certificate"`
+	State       types.String `tfsdk:"state"`
+	InstanceID  types.String `tfsdk:"instance_id"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
 }
@@ -80,6 +92,14 @@ func (r *ProviderResource) Schema(ctx context.Context, req resource.SchemaReques
 					"behavior, which rejects a bare thumbprint with a govc \"cannot be used as a trusted CA " +
 					"certificate\" error.",
 				Required: true,
+			},
+			"state": schema.StringAttribute{
+				MarkdownDescription: "JSON-encoded additional metadata about the provider, as reported by the API.",
+				Computed:            true,
+			},
+			"instance_id": schema.StringAttribute{
+				MarkdownDescription: "The instance ID of the vSphere provider in the SSPI appliance.",
+				Computed:            true,
 			},
 			"created_at": schema.StringAttribute{
 				MarkdownDescription: "Resource creation time.",
@@ -243,6 +263,16 @@ func (r *ProviderResource) readProvider(ctx context.Context, id string, data *Pr
 	if prov.Certificate != nil {
 		data.Certificate = types.StringValue(*prov.Certificate)
 	}
+	if prov.State != nil {
+		data.State = types.StringValue(*prov.State)
+	} else {
+		data.State = types.StringNull()
+	}
+	if prov.InstanceId != nil {
+		data.InstanceID = types.StringValue(*prov.InstanceId)
+	} else {
+		data.InstanceID = types.StringNull()
+	}
 	if prov.UnderscoreCreateTime != nil {
 		data.CreatedAt = types.StringValue(time.UnixMilli(*prov.UnderscoreCreateTime).UTC().Format(time.RFC3339))
 	}
@@ -260,11 +290,27 @@ func (r *ProviderResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	// Fetch the current revision so this PUT isn't rejected by the backend's
+	// optimistic-locking check (missing _revision -> 428, stale -> 412).
+	currentResp, err := r.client.GetVsphereProviderWithResponse(ctx, data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading current SSPI Provider", err.Error())
+		return
+	}
+	if currentResp.JSON200 == nil {
+		resp.Diagnostics.AddError(
+			"Error reading current SSPI Provider",
+			fmt.Sprintf("Unexpected response from API: %d", currentResp.StatusCode()),
+		)
+		return
+	}
+
 	updateReq := api_client.VsphereProviderDefinition{
-		Server:      data.Server.ValueString(),
-		User:        data.User.ValueString(),
-		Password:    Ptr(data.Password.ValueString()),
-		Certificate: Ptr(data.Certificate.ValueString()),
+		Server:             data.Server.ValueString(),
+		User:               data.User.ValueString(),
+		Password:           Ptr(data.Password.ValueString()),
+		Certificate:        Ptr(data.Certificate.ValueString()),
+		UnderscoreRevision: currentResp.JSON200.UnderscoreRevision,
 	}
 
 	tflog.Debug(ctx, "Updating SSPI Provider", map[string]interface{}{"id": data.ID.ValueString()})
@@ -286,6 +332,14 @@ func (r *ProviderResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	// The update is async (202 + status_url); wait for the connection
+	// re-validation workflow to reach a terminal state before reporting
+	// success, rather than trusting the immediate HTTP response alone.
+	if err := r.waitForProviderStatus(ctx, data.ID.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Error waiting for SSPI Provider update to complete", err.Error())
+		return
+	}
+
 	found := r.readProvider(ctx, data.ID.ValueString(), &data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
@@ -299,6 +353,55 @@ func (r *ProviderResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// waitForProviderStatus polls GET /sspi/providers/{id}/status until the
+// provider's connection-revalidation workflow reaches a terminal state,
+// returning an error if it fails or the connection ends up NOT_CONNECTED.
+func (r *ProviderResource) waitForProviderStatus(ctx context.Context, id string) error {
+	deadline := time.Now().Add(providerPollTimeout)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for provider %s status to settle", providerPollTimeout, id)
+		}
+
+		statusResp, err := r.client.GetProviderStatusWithResponse(ctx, id)
+		if err != nil {
+			return fmt.Errorf("error polling status for provider %s: %w", id, err)
+		}
+		if statusResp.JSON200 == nil {
+			return fmt.Errorf("unexpected empty status response for provider %s (HTTP %d)", id, statusResp.StatusCode())
+		}
+
+		if wf := statusResp.JSON200.WorkflowResults; wf != nil && wf.State != nil {
+			switch *wf.State {
+			case api_client.WorkflowResultStateCOMPLETED,
+				api_client.WorkflowResultStateFAILED,
+				api_client.WorkflowResultStateABORTED,
+				api_client.WorkflowResultStateSTOPPED,
+				api_client.WorkflowResultStateROLLBACKCOMPLETED,
+				api_client.WorkflowResultStateROLLBACKFAILED,
+				api_client.WorkflowResultStateROLLBACKSTOPPED:
+				if cs := statusResp.JSON200.ConnectionStatus; cs != nil && cs.State == api_client.NOTCONNECTED {
+					return fmt.Errorf("provider %s is not connected: %s", id, cs.Message)
+				}
+				return nil
+			}
+		} else if cs := statusResp.JSON200.ConnectionStatus; cs != nil {
+			// No workflow in flight (e.g. status re-checked well after the
+			// update completed) - the connection status alone is authoritative.
+			if cs.State == api_client.NOTCONNECTED {
+				return fmt.Errorf("provider %s is not connected: %s", id, cs.Message)
+			}
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(providerPollInterval):
+		}
+	}
 }
 
 func (r *ProviderResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

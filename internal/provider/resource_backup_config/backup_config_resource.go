@@ -186,6 +186,23 @@ func (r *BackupConfigResource) saveBackupConfig(ctx context.Context, data *Backu
 		Username:       data.Username.ValueString(),
 	}
 
+	// Fetch the current revision (if a backup config already exists) so this
+	// PUT isn't rejected by the backend's optimistic-locking check; a 404
+	// means no config exists yet, so the zero-value Revision is correct as-is.
+	currentResp, err := r.client.GetBackupConfigWithResponse(ctx)
+	if err != nil {
+		diags.AddError("Error reading current SSPI Backup Configuration", "Could not read current backup configuration: "+err.Error())
+		return
+	}
+	if currentResp.StatusCode() != http.StatusNotFound {
+		if currentResp.JSON200 == nil {
+			diags.AddError("Error reading current SSPI Backup Configuration",
+				fmt.Sprintf("Unexpected API response: %d: %s", currentResp.StatusCode(), string(currentResp.Body)))
+			return
+		}
+		body.UnderscoreRevision = currentResp.JSON200.UnderscoreRevision
+	}
+
 	updateResp, err := r.client.UpdateBackupConfigWithResponse(ctx, body)
 	if err != nil {
 		diags.AddError("Error saving SSPI Backup Configuration", "Could not save backup configuration: "+err.Error())

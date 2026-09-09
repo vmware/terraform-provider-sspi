@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -49,6 +50,11 @@ func newRecurringBackupConfigMockServer(t *testing.T) *httptest.Server {
 		_ = json.Unmarshal(raw, &body)
 
 		m.mu.Lock()
+		rev := 1
+		if m.config.UnderscoreRevision != nil {
+			rev = *m.config.UnderscoreRevision + 1
+		}
+		body.UnderscoreRevision = &rev
 		m.config = body
 		cfg := m.config
 		m.mu.Unlock()
@@ -73,23 +79,24 @@ func newRecurringBackupConfigMockServer(t *testing.T) *httptest.Server {
 // TestUnitRecurringBackupConfigResource. backup_type is pinned to the value
 // the resource itself defaults to when unset, since the API response is
 // always echoed back into state for this Optional (non-Computed) attribute.
-func testUnitRecurringBackupConfigConfig(host string) string {
-	return testUnitSSPIProviderConfig(host) + `
+func testUnitRecurringBackupConfigConfig(host string, enabled bool) string {
+	return testUnitSSPIProviderConfig(host) + fmt.Sprintf(`
 resource "sspi_installer_recurring_backup_config" "test" {
-  enabled              = true
+  enabled              = %t
   backup_type          = "FULL_BACKUP"
   backup_schedule_type = "WEEKLY"
   backup_schedule_weekly = {
     days_of_week = ["MONDAY"]
   }
 }
-`
+`, enabled)
 }
 
 // TestUnitRecurringBackupConfigResource exercises
-// ssp_installer_recurring_backup_config's Create and Read against a mocked
-// SSPI appliance API. This resource is a singleton (id is always
-// "singleton") with no create/delete API, only get/put.
+// ssp_installer_recurring_backup_config's Create, Read, and Update (enabled
+// flip, exercising the _revision-aware PUT) against a mocked SSPI appliance
+// API. This resource is a singleton (id is always "singleton") with no
+// create/delete API, only get/put.
 func TestUnitRecurringBackupConfigResource(t *testing.T) {
 	srv := newRecurringBackupConfigMockServer(t)
 
@@ -97,11 +104,19 @@ func TestUnitRecurringBackupConfigResource(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testUnitRecurringBackupConfigConfig(srv.URL),
+				Config: testUnitRecurringBackupConfigConfig(srv.URL, true),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("sspi_installer_recurring_backup_config.test", "id", "singleton"),
 					resource.TestCheckResourceAttr("sspi_installer_recurring_backup_config.test", "enabled", "true"),
 					resource.TestCheckResourceAttr("sspi_installer_recurring_backup_config.test", "backup_schedule_type", "WEEKLY"),
+				),
+			},
+			// Update: flip enabled; requires the mock's PUT handler to accept
+			// the _revision the resource fetched via GET beforehand.
+			{
+				Config: testUnitRecurringBackupConfigConfig(srv.URL, false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("sspi_installer_recurring_backup_config.test", "enabled", "false"),
 				),
 			},
 		},

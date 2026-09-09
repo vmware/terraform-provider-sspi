@@ -24,4 +24,6 @@ Manages a vSphere Provider connection in the SSPI.
 
 - `created_at` (String) Resource creation time.
 - `id` (String) Unique identifier for the vSphere provider.
+- `instance_id` (String) The instance ID of the vSphere provider in the SSPI appliance.
+- `state` (String) JSON-encoded additional metadata about the provider, as reported by the API.
 - `updated_at` (String) Resource last update time.

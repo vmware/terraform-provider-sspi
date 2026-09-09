@@ -10,12 +10,15 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -45,14 +48,16 @@ type LdapIdentitySourceResource struct {
 
 // LdapIdentitySourceResourceModel describes the resource data model.
 type LdapIdentitySourceResourceModel struct {
-	ID        types.String `tfsdk:"id"`
-	Domain    types.String `tfsdk:"domain"`
-	Server    types.String `tfsdk:"server"`
-	Port      types.Int64  `tfsdk:"port"`
-	AdminDN   types.String `tfsdk:"admin_dn"`
-	Password  types.String `tfsdk:"password"`
-	BaseDN    types.String `tfsdk:"base_dn"`
-	VerifySSL types.Bool   `tfsdk:"verify_ssl"`
+	ID           types.String `tfsdk:"id"`
+	Domain       types.String `tfsdk:"domain"`
+	Server       types.String `tfsdk:"server"`
+	Port         types.Int64  `tfsdk:"port"`
+	AdminDN      types.String `tfsdk:"admin_dn"`
+	Password     types.String `tfsdk:"password"`
+	BaseDN       types.String `tfsdk:"base_dn"`
+	VerifySSL    types.Bool   `tfsdk:"verify_ssl"`
+	LdapType     types.String `tfsdk:"ldap_type"`
+	Certificates types.List   `tfsdk:"certificates"`
 }
 
 func (r *LdapIdentitySourceResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -99,10 +104,25 @@ func (r *LdapIdentitySourceResource) Schema(ctx context.Context, req resource.Sc
 				Required:            true,
 			},
 			"verify_ssl": schema.BoolAttribute{
-				MarkdownDescription: "Not currently supported: `apis/sspi/sspi-iam.yaml`'s `LdapIdentitySourceServer` " +
-					"schema has no SSL-verification field (only a `certificates` trust-anchor list), so this " +
-					"attribute is not sent to the API and has no effect. Retained only for schema compatibility.",
+				MarkdownDescription: "Not currently supported: the `LdapIdentitySourceServer` schema has no " +
+					"SSL-verification field (only a `certificates` trust-anchor list), so this attribute is not " +
+					"sent to the API and has no effect. Retained only for schema compatibility.",
 				Optional: true,
+			},
+			"ldap_type": schema.StringAttribute{
+				MarkdownDescription: "The LDAP directory type: `ACTIVE_DIRECTORY` or `OPEN_LDAP`. Defaults to `ACTIVE_DIRECTORY`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("ACTIVE_DIRECTORY"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("ACTIVE_DIRECTORY", "OPEN_LDAP"),
+				},
+			},
+			"certificates": schema.ListAttribute{
+				MarkdownDescription: "PEM-encoded certificate(s) to trust when connecting to the LDAP server. " +
+					"Required by the API when creating an LDAP identity source.",
+				ElementType: types.StringType,
+				Required:    true,
 			},
 		},
 	}
@@ -153,14 +173,21 @@ func (r *LdapIdentitySourceResource) Create(ctx context.Context, req resource.Cr
 	}
 	serverURL := fmt.Sprintf("ldaps://%s:%d", data.Server.ValueString(), port)
 
+	certs, diags := certificatesFromList(ctx, data.Certificates)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	body := iam_client.LdapIdentitySource{
 		BaseDistinguishedName: data.BaseDN.ValueString(),
 		DomainName:            data.Domain.ValueString(),
-		LdapType:              iam_client.ACTIVEDIRECTORY,
+		LdapType:              ldapTypeFromString(data.LdapType.ValueString()),
 		LdapServer: iam_client.LdapIdentitySourceServer{
 			Url:          serverURL,
 			BindIdentity: Ptr(data.AdminDN.ValueString()),
 			Password:     Ptr(data.Password.ValueString()),
+			Certificates: certs,
 			Enabled:      Ptr(true),
 		},
 	}
@@ -184,9 +211,43 @@ func (r *LdapIdentitySourceResource) Create(ctx context.Context, req resource.Cr
 
 	if createResp.JSON200 != nil {
 		addConnectivityDiagnostics(&resp.Diagnostics, createResp.JSON200.ConnectivityResult)
+		data.LdapType = types.StringValue(string(createResp.JSON200.LdapType))
+	} else {
+		// Matches Read()'s convention of sourcing ldap_type from the API
+		// response rather than the sent value; fall back to what was sent
+		// only if the API didn't echo a body back at all.
+		data.LdapType = types.StringValue(string(body.LdapType))
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// ldapTypeFromString converts the configured ldap_type string into the
+// generated LdapType enum, defaulting to ACTIVE_DIRECTORY for an empty value
+// (the schema's Default already guarantees non-empty in practice).
+func ldapTypeFromString(s string) iam_client.LdapType {
+	if s == string(iam_client.OPENLDAP) {
+		return iam_client.OPENLDAP
+	}
+	return iam_client.ACTIVEDIRECTORY
+}
+
+// certificatesFromList converts the certificates Terraform list attribute
+// into the generated client's *[]string, for use in create/update request
+// bodies.
+func certificatesFromList(ctx context.Context, l types.List) (*[]string, diag.Diagnostics) {
+	if l.IsNull() || l.IsUnknown() {
+		// certificates is Required, so the framework never actually invokes
+		// Create/Update with an unresolved value here; kept as a defensive
+		// guard rather than assuming that invariant always holds.
+		return nil, nil
+	}
+	var certs []string
+	diags := l.ElementsAs(ctx, &certs, false)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return &certs, diags
 }
 
 // addConnectivityDiagnostics surfaces a hard error if the API's embedded
@@ -249,6 +310,14 @@ func (r *LdapIdentitySourceResource) Read(ctx context.Context, req resource.Read
 		data.Server = types.StringValue(server)
 		data.Port = types.Int64Value(port)
 	}
+	data.LdapType = types.StringValue(string(src.LdapType))
+	if src.LdapServer.Certificates != nil {
+		certList, diags := types.ListValueFrom(ctx, types.StringType, *src.LdapServer.Certificates)
+		resp.Diagnostics.Append(diags...)
+		if !resp.Diagnostics.HasError() {
+			data.Certificates = certList
+		}
+	}
 	// verify_ssl has no server-side equivalent (see schema description) and is
 	// intentionally left as-is from prior state/config rather than overwritten.
 
@@ -286,17 +355,40 @@ func (r *LdapIdentitySourceResource) Update(ctx context.Context, req resource.Up
 	}
 	serverURL := fmt.Sprintf("ldaps://%s:%d", data.Server.ValueString(), port)
 
+	certs, diags := certificatesFromList(ctx, data.Certificates)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	body := iam_client.LdapIdentitySource{
 		BaseDistinguishedName: data.BaseDN.ValueString(),
 		DomainName:            data.Domain.ValueString(),
-		LdapType:              iam_client.ACTIVEDIRECTORY,
+		LdapType:              ldapTypeFromString(data.LdapType.ValueString()),
 		LdapServer: iam_client.LdapIdentitySourceServer{
 			Url:          serverURL,
 			BindIdentity: Ptr(data.AdminDN.ValueString()),
 			Password:     Ptr(data.Password.ValueString()),
+			Certificates: certs,
 			Enabled:      Ptr(true),
 		},
 	}
+
+	// Fetch the current revision so this PUT isn't rejected by the backend's
+	// optimistic-locking check (missing _revision -> 428, stale -> 412).
+	currentResp, err := r.client.GetLdapIdentitySourceWithResponse(ctx, data.ID.ValueString(), &iam_client.GetLdapIdentitySourceParams{})
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading current LDAP Identity Source", err.Error())
+		return
+	}
+	if currentResp.JSON200 == nil {
+		resp.Diagnostics.AddError(
+			"Error reading current LDAP Identity Source",
+			fmt.Sprintf("Unexpected response from API: %d", currentResp.StatusCode()),
+		)
+		return
+	}
+	body.UnderscoreRevision = currentResp.JSON200.UnderscoreRevision
 
 	updateResp, err := r.client.UpdateLdapIdentitySourceWithResponse(ctx, data.ID.ValueString(), body)
 	if err != nil {
@@ -311,6 +403,12 @@ func (r *LdapIdentitySourceResource) Update(ctx context.Context, req resource.Up
 
 	if updateResp.JSON200 != nil {
 		addConnectivityDiagnostics(&resp.Diagnostics, updateResp.JSON200.ConnectivityResult)
+		data.LdapType = types.StringValue(string(updateResp.JSON200.LdapType))
+	} else {
+		// Matches Read()'s convention of sourcing ldap_type from the API
+		// response rather than the sent value; fall back to what was sent
+		// only if the API didn't echo a body back at all.
+		data.LdapType = types.StringValue(string(body.LdapType))
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
