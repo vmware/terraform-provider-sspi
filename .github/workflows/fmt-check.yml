@@ -1,0 +1,36 @@
+---
+name: Formatting check (sspi)
+
+on:
+  pull_request:
+    paths:
+      - 'internal/**'
+      - 'main.go'
+      - '.github/workflows/fmt-check.yml'
+  push:
+    branches:
+      - main
+      - 'branch_*'
+      - 'release-*'
+    paths:
+      - 'internal/**'
+      - 'main.go'
+      - '.github/workflows/fmt-check.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  fmt-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Run formatting tests
+        run: make fmtcheck

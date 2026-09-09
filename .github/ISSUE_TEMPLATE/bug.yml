@@ -1,0 +1,31 @@
+name: Bug Report
+description: File a bug report to help us improve the Terraform SSP Provider
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue!
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: terraform-config
+    attributes:
+      label: Terraform Configuration Files
+      description: Paste relevant Terraform code snippet.
+      render: hcl
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?

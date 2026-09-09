@@ -1,0 +1,26 @@
+---
+name: docs-lint
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Docs Lint
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          config: '.markdownlint.jsonc'
+          globs: |
+            docs/*.md
+            docs/data-sources/*.md
+            docs/guides/*.md
+            docs/resources/*.md
