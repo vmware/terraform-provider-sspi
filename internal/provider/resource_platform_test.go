@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,7 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 		defer m.mu.Unlock()
 		m.exists = true
 		m.body = readBody(r)
+		m.body["_revision"] = 0
 		writeJSON(w, http.StatusAccepted, map[string]any{"id": "platform-1"})
 	})
 	mux.HandleFunc("GET /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +72,13 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("PUT /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		m.body = readBody(r)
+		updated := readBody(r)
+		if rev, ok := updated["_revision"].(float64); ok {
+			updated["_revision"] = rev + 1
+		} else {
+			updated["_revision"] = 1
+		}
+		m.body = updated
 		writeJSON(w, http.StatusAccepted, map[string]any{"id": "platform-1"})
 	})
 	mux.HandleFunc("DELETE /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -94,13 +102,17 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 }
 
 func testUnitPlatformConfig(host string) string {
-	return testUnitSSPIProviderConfig(host) + `
+	return testUnitPlatformConfigWithWorkerCount(host, 3)
+}
+
+func testUnitPlatformConfigWithWorkerCount(host string, workerCount int) string {
+	return testUnitSSPIProviderConfig(host) + fmt.Sprintf(`
 resource "sspi_platform" "test" {
   provider_id              = "vsphere-provider-1"
   display_name             = "tf-unit-test-platform"
   form_factor              = "COMPACT"
   ssp_type                 = "ATP"
-  worker_count             = 3
+  worker_count             = %d
   controller_count         = 3
   datacenter_id             = "datacenter-1"
   cluster_id                = "cluster-1"
@@ -118,10 +130,11 @@ resource "sspi_platform" "test" {
   kafka_fqdn                = "kafka.corp.local"
   ssp_bundle_id             = "bundle-1"
 }
-`
+`, workerCount)
 }
 
-// TestUnitPlatformResource exercises ssp_platform's Create, Read, and Delete
+// TestUnitPlatformResource exercises ssp_platform's Create, Read, Update
+// (worker_count change, exercising the _revision-aware PUT), and Delete
 // against a mocked SSPI appliance API.
 func TestUnitPlatformResource(t *testing.T) {
 	srv := newPlatformMockServer(t)
@@ -137,6 +150,16 @@ func TestUnitPlatformResource(t *testing.T) {
 					resource.TestCheckResourceAttr("sspi_platform.test", "form_factor", "COMPACT"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "worker_count", "3"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "status", "DEPLOYMENT"),
+				),
+			},
+			// Update: change worker_count in place; requires the mock's PUT
+			// handler to accept the _revision the resource fetched via GET
+			// beforehand.
+			{
+				Config: testUnitPlatformConfigWithWorkerCount(srv.URL, 5),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("sspi_platform.test", "id", "platform-1"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "worker_count", "5"),
 				),
 			},
 		},

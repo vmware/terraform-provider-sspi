@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -64,6 +65,7 @@ func newLdapIdentitySourceMockServer(t *testing.T, connectivityResult map[string
 		m.mu.Lock()
 		m.exists = true
 		m.body = readBody(r)
+		m.body["_revision"] = 0
 		m.mu.Unlock()
 		writeJSON(w, http.StatusOK, responseBody())
 	})
@@ -79,7 +81,13 @@ func newLdapIdentitySourceMockServer(t *testing.T, connectivityResult map[string
 	})
 	mux.HandleFunc("PUT /sspi/iam/ldap-identity-sources/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
-		m.body = readBody(r)
+		body := readBody(r)
+		rev := 1
+		if r, ok := m.body["_revision"].(float64); ok {
+			rev = int(r) + 1
+		}
+		body["_revision"] = rev
+		m.body = body
 		m.mu.Unlock()
 		writeJSON(w, http.StatusOK, responseBody())
 	})
@@ -95,23 +103,27 @@ func newLdapIdentitySourceMockServer(t *testing.T, connectivityResult map[string
 	return srv
 }
 
-func testUnitLdapIdentitySourceConfig(host string) string {
-	return testUnitSSPIProviderConfig(host) + `
+func testUnitLdapIdentitySourceConfig(host, ldapType string) string {
+	return testUnitSSPIProviderConfig(host) + fmt.Sprintf(`
 resource "sspi_ldap_identity_source" "test" {
-  domain     = "corp.local"
-  server     = "ldap.corp.local"
-  port       = 636
-  admin_dn   = "cn=admin,dc=corp,dc=local"
-  password   = "s3cr3t"
-  base_dn    = "dc=corp,dc=local"
-  verify_ssl = true
+  domain       = "corp.local"
+  server       = "ldap.corp.local"
+  port         = 636
+  admin_dn     = "cn=admin,dc=corp,dc=local"
+  password     = "s3cr3t"
+  base_dn      = "dc=corp,dc=local"
+  verify_ssl   = true
+  ldap_type    = %q
+  certificates = ["-----BEGIN CERTIFICATE-----\nMIIB...fake...\n-----END CERTIFICATE-----"]
 }
-`
+`, ldapType)
 }
 
 // TestUnitLdapIdentitySourceResource exercises ssp_ldap_identity_source's
-// Create and Read against a mocked SSPI appliance API, confirming that
-// server/port correctly round-trip from the parsed ldap_server.url field.
+// Create, Read, and Update (base_dn change, exercising the _revision-aware
+// PUT) against a mocked SSPI appliance API, confirming that server/port
+// correctly round-trip from the parsed ldap_server.url field and that
+// ldap_type/certificates round-trip too.
 func TestUnitLdapIdentitySourceResource(t *testing.T) {
 	srv := newLdapIdentitySourceMockServer(t, map[string]any{"result": "SUCCESS"})
 
@@ -119,13 +131,54 @@ func TestUnitLdapIdentitySourceResource(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testUnitLdapIdentitySourceConfig(srv.URL),
+				Config: testUnitLdapIdentitySourceConfig(srv.URL, "ACTIVE_DIRECTORY"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("sspi_ldap_identity_source.test", "id"),
 					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "domain", "corp.local"),
 					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "server", "ldap.corp.local"),
 					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "port", "636"),
 					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "base_dn", "dc=corp,dc=local"),
+					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "ldap_type", "ACTIVE_DIRECTORY"),
+					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "certificates.#", "1"),
+				),
+			},
+			// Update: change base_dn; requires the mock's PUT handler to
+			// accept the _revision the resource fetched via GET beforehand.
+			{
+				Config: testUnitSSPIProviderConfig(srv.URL) + `
+resource "sspi_ldap_identity_source" "test" {
+  domain       = "corp.local"
+  server       = "ldap.corp.local"
+  port         = 636
+  admin_dn     = "cn=admin,dc=corp,dc=local"
+  password     = "s3cr3t"
+  base_dn      = "dc=corp,dc=local,dc=updated"
+  verify_ssl   = true
+  ldap_type    = "ACTIVE_DIRECTORY"
+  certificates = ["-----BEGIN CERTIFICATE-----\nMIIB...fake...\n-----END CERTIFICATE-----"]
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "base_dn", "dc=corp,dc=local,dc=updated"),
+				),
+			},
+		},
+	})
+}
+
+// TestUnitLdapIdentitySourceResource_OpenLdap confirms ldap_type=OPEN_LDAP is
+// accepted and sent to the API (the resource previously hardcoded
+// ACTIVE_DIRECTORY, making OpenLDAP directories unreachable).
+func TestUnitLdapIdentitySourceResource_OpenLdap(t *testing.T) {
+	srv := newLdapIdentitySourceMockServer(t, map[string]any{"result": "SUCCESS"})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testUnitLdapIdentitySourceConfig(srv.URL, "OPEN_LDAP"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("sspi_ldap_identity_source.test", "ldap_type", "OPEN_LDAP"),
 				),
 			},
 		},
@@ -147,7 +200,7 @@ func TestUnitLdapIdentitySourceResource_ConnectivityFailure(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      testUnitLdapIdentitySourceConfig(srv.URL),
+				Config:      testUnitLdapIdentitySourceConfig(srv.URL, "ACTIVE_DIRECTORY"),
 				ExpectError: regexp.MustCompile(regexp.QuoteMeta("Connectivity Check Failed")),
 			},
 		},
