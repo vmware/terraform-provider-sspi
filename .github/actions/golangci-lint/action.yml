@@ -19,7 +19,7 @@ runs:
   using: composite
   steps:
     - name: Run Linters
-      uses: golangci/golangci-lint-action@v7
+      uses: golangci/golangci-lint-action@v9
       with:
         version: latest
         args: ${{ inputs.args }} --timeout=${{ inputs.timeout }}
