@@ -28,6 +28,7 @@ import (
 	"github.com/vmware/terraform-provider-sspi/internal/client/upgrade_client"
 	datasource_bundle "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_bundle"
 	datasource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_platform"
+	datasource_upgrade_packages "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_upgrade_packages"
 	datasource_vsphere_provider "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_vsphere_provider"
 	resource_backup "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup"
 	resource_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup_config"
@@ -251,6 +252,7 @@ func (p *SspiProvider) DataSources(ctx context.Context) []func() datasource.Data
 		datasource_vsphere_provider.NewVsphereProviderDataSource,
 		datasource_platform.NewPlatformDataSource,
 		datasource_bundle.NewBundleDataSource,
+		datasource_upgrade_packages.NewUpgradePackagesDataSource,
 	}
 }
 
