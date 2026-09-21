@@ -240,14 +240,16 @@ func (r *RecurringBackupConfigResource) saveRecurringConfig(ctx context.Context,
 	}
 
 	// Fetch the current revision (if a recurring backup config already exists)
-	// so this PUT isn't rejected by the backend's optimistic-locking check; a
-	// 404 means no config exists yet, so the zero-value Revision is correct.
+	// so this PUT isn't rejected by the backend's optimistic-locking check. No
+	// config existing yet is signaled by 204 No Content on this endpoint
+	// (confirmed live, same as the plain backup config endpoint - NOT 404), in
+	// which case the zero-value Revision is correct as-is.
 	currentResp, err := r.client.GetRecurringBackupConfigWithResponse(ctx)
 	if err != nil {
 		diags.AddError("Error reading current Recurring Backup Configuration", "Could not read current recurring backup config: "+err.Error())
 		return
 	}
-	if currentResp.StatusCode() != http.StatusNotFound {
+	if currentResp.StatusCode() != http.StatusNotFound && currentResp.StatusCode() != http.StatusNoContent {
 		if currentResp.JSON200 == nil {
 			diags.AddError("Error reading current Recurring Backup Configuration",
 				fmt.Sprintf("Unexpected API response: %d: %s", currentResp.StatusCode(), string(currentResp.Body)))
@@ -351,7 +353,7 @@ func (r *RecurringBackupConfigResource) Read(ctx context.Context, req resource.R
 		return
 	}
 
-	if readResp.StatusCode() == http.StatusNotFound {
+	if readResp.StatusCode() == http.StatusNotFound || readResp.StatusCode() == http.StatusNoContent {
 		resp.State.RemoveResource(ctx)
 		return
 	}

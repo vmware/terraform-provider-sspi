@@ -330,7 +330,19 @@ func (r *UpgradeResource) Create(ctx context.Context, req resource.CreateRequest
 	if status != nil {
 		mapUpgradeStatusToState(status, &data)
 	} else {
+		// triggerUpgrade failed before the API ever returned a status object
+		// (e.g. the initial POST itself 400'd, as it does when the Upgrade
+		// Manager hasn't been upgraded yet). Every Computed attribute must
+		// still resolve to a known value here - leaving them as the Unknown
+		// planned value makes Terraform reject the whole apply with "Provider
+		// returned invalid result object after apply" on top of the real
+		// error below, obscuring it.
 		data.ID = types.StringValue(upgradeSingletonID)
+		data.CurrentVersion = types.StringNull()
+		data.TargetVersion = types.StringNull()
+		data.Status = types.StringNull()
+		data.Progress = types.Int64Null()
+		data.CurrentStep = types.StringNull()
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	if err != nil {

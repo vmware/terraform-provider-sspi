@@ -199,7 +199,7 @@ func (r *LdapIdentitySourceResource) Create(ctx context.Context, req resource.Cr
 	}
 
 	if createResp.StatusCode() != http.StatusOK && createResp.StatusCode() != http.StatusCreated && createResp.StatusCode() != http.StatusAccepted {
-		resp.Diagnostics.AddError("Error creating LDAP Identity Source", fmt.Sprintf("Unexpected API response: %d", createResp.StatusCode()))
+		resp.Diagnostics.AddError("Error creating LDAP Identity Source", fmt.Sprintf("Unexpected API response: %d, body: %s", createResp.StatusCode(), string(createResp.Body)))
 		return
 	}
 
@@ -384,7 +384,7 @@ func (r *LdapIdentitySourceResource) Update(ctx context.Context, req resource.Up
 	if currentResp.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error reading current LDAP Identity Source",
-			fmt.Sprintf("Unexpected response from API: %d", currentResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", currentResp.StatusCode(), string(currentResp.Body)),
 		)
 		return
 	}
@@ -397,7 +397,7 @@ func (r *LdapIdentitySourceResource) Update(ctx context.Context, req resource.Up
 	}
 
 	if updateResp.StatusCode() != http.StatusOK && updateResp.StatusCode() != http.StatusAccepted {
-		resp.Diagnostics.AddError("Error updating LDAP Identity Source", fmt.Sprintf("Unexpected API response: %d", updateResp.StatusCode()))
+		resp.Diagnostics.AddError("Error updating LDAP Identity Source", fmt.Sprintf("Unexpected API response: %d, body: %s", updateResp.StatusCode(), string(updateResp.Body)))
 		return
 	}
 
@@ -436,7 +436,7 @@ func (r *LdapIdentitySourceResource) Delete(ctx context.Context, req resource.De
 	if deleteResp.StatusCode() != http.StatusOK && deleteResp.StatusCode() != http.StatusNoContent && deleteResp.StatusCode() != http.StatusNotFound {
 		resp.Diagnostics.AddError(
 			"Error deleting SSPI LDAP Identity Source",
-			fmt.Sprintf("Unexpected response from API: %d", deleteResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", deleteResp.StatusCode(), string(deleteResp.Body)),
 		)
 		return
 	}

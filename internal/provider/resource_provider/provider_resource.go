@@ -249,7 +249,7 @@ func (r *ProviderResource) readProvider(ctx context.Context, id string, data *Pr
 	if readResp.JSON200 == nil {
 		diags.AddError(
 			"Error reading SSPI Provider",
-			fmt.Sprintf("Unexpected response from API: %d", readResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", readResp.StatusCode(), string(readResp.Body)),
 		)
 		return false
 	}
@@ -259,8 +259,18 @@ func (r *ProviderResource) readProvider(ctx context.Context, id string, data *Pr
 		data.ID = types.StringValue(*prov.Id)
 	}
 	data.Server = types.StringValue(prov.Server)
-	data.User = types.StringValue(prov.User)
-	if prov.Certificate != nil {
+	// user and certificate are Required (not Computed), so a value already present in
+	// data (the configured value, during Create/Update) must be preserved unchanged -
+	// the API returns SSPI's own auto-generated service account in "user" (not the
+	// admin user actually used to register the provider) and never returns
+	// "certificate" at all, so overwriting either here would violate the framework's
+	// post-apply consistency check ("Provider produced inconsistent result after
+	// apply"). When data starts empty (e.g. a plain Read right after `terraform
+	// import`), populate them from the API as the best available information.
+	if data.User.IsNull() || data.User.ValueString() == "" {
+		data.User = types.StringValue(prov.User)
+	}
+	if data.Certificate.IsNull() && prov.Certificate != nil {
 		data.Certificate = types.StringValue(*prov.Certificate)
 	}
 	if prov.State != nil {
@@ -300,7 +310,7 @@ func (r *ProviderResource) Update(ctx context.Context, req resource.UpdateReques
 	if currentResp.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error reading current SSPI Provider",
-			fmt.Sprintf("Unexpected response from API: %d", currentResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", currentResp.StatusCode(), string(currentResp.Body)),
 		)
 		return
 	}
@@ -327,7 +337,7 @@ func (r *ProviderResource) Update(ctx context.Context, req resource.UpdateReques
 	if updateResp.StatusCode() != http.StatusOK && updateResp.StatusCode() != http.StatusAccepted {
 		resp.Diagnostics.AddError(
 			"Error updating SSPI Provider",
-			fmt.Sprintf("Unexpected response from API: %d", updateResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", updateResp.StatusCode(), string(updateResp.Body)),
 		)
 		return
 	}
@@ -355,9 +365,9 @@ func (r *ProviderResource) Update(ctx context.Context, req resource.UpdateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-// waitForProviderStatus polls GET /sspi/providers/{id}/status until the
-// provider's connection-revalidation workflow reaches a terminal state,
-// returning an error if it fails or the connection ends up NOT_CONNECTED.
+// waitForProviderStatus polls GET /sspi/providers/{id}/status until no update
+// workflow is actively in flight, returning an error if that workflow ends up
+// in a bad terminal state or the connection ends up NOT_CONNECTED.
 func (r *ProviderResource) waitForProviderStatus(ctx context.Context, id string) error {
 	deadline := time.Now().Add(providerPollTimeout)
 	for {
@@ -373,24 +383,33 @@ func (r *ProviderResource) waitForProviderStatus(ctx context.Context, id string)
 			return fmt.Errorf("unexpected empty status response for provider %s (HTTP %d)", id, statusResp.StatusCode())
 		}
 
+		// A workflow only needs waiting on while it's actively running. NOT_STARTED
+		// (e.g. the update finished so fast there's no residual workflow to observe)
+		// is neither an active state nor one of the recognized terminal states, so the
+		// original code fell through this switch without matching anything and never
+		// reached the ConnectionStatus check below - it just kept polling for the full
+		// providerPollTimeout even though ConnectionStatus already said CONNECTED.
+		inFlight := false
 		if wf := statusResp.JSON200.WorkflowResults; wf != nil && wf.State != nil {
 			switch *wf.State {
-			case api_client.WorkflowResultStateCOMPLETED,
-				api_client.WorkflowResultStateFAILED,
+			case api_client.WorkflowResultStateQUEUED,
+				api_client.WorkflowResultStateRUNNING,
+				api_client.WorkflowResultStateSTOPPING,
+				api_client.WorkflowResultStateROLLBACKQUEUED,
+				api_client.WorkflowResultStateROLLBACKRUNNING,
+				api_client.WorkflowResultStateROLLBACKSTOPPING:
+				inFlight = true
+			case api_client.WorkflowResultStateFAILED,
 				api_client.WorkflowResultStateABORTED,
 				api_client.WorkflowResultStateSTOPPED,
-				api_client.WorkflowResultStateROLLBACKCOMPLETED,
 				api_client.WorkflowResultStateROLLBACKFAILED,
 				api_client.WorkflowResultStateROLLBACKSTOPPED:
-				if cs := statusResp.JSON200.ConnectionStatus; cs != nil && cs.State == api_client.NOTCONNECTED {
-					return fmt.Errorf("provider %s is not connected: %s", id, cs.Message)
-				}
-				return nil
+				return fmt.Errorf("provider %s update workflow ended in state %s", id, *wf.State)
 			}
-		} else if cs := statusResp.JSON200.ConnectionStatus; cs != nil {
-			// No workflow in flight (e.g. status re-checked well after the
-			// update completed) - the connection status alone is authoritative.
-			if cs.State == api_client.NOTCONNECTED {
+		}
+
+		if !inFlight {
+			if cs := statusResp.JSON200.ConnectionStatus; cs != nil && cs.State == api_client.NOTCONNECTED {
 				return fmt.Errorf("provider %s is not connected: %s", id, cs.Message)
 			}
 			return nil
@@ -426,7 +445,7 @@ func (r *ProviderResource) Delete(ctx context.Context, req resource.DeleteReques
 	if deleteResp.StatusCode() != http.StatusOK && deleteResp.StatusCode() != http.StatusNoContent && deleteResp.StatusCode() != http.StatusNotFound {
 		resp.Diagnostics.AddError(
 			"Error deleting SSPI Provider",
-			fmt.Sprintf("Unexpected response from API: %d", deleteResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", deleteResp.StatusCode(), string(deleteResp.Body)),
 		)
 		return
 	}
