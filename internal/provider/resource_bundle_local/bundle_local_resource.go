@@ -190,7 +190,7 @@ func (r *BundleLocalResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	if uploadResp.StatusCode() != http.StatusOK && uploadResp.StatusCode() != http.StatusAccepted && uploadResp.StatusCode() != http.StatusCreated {
-		resp.Diagnostics.AddError("Error uploading local bundle", fmt.Sprintf("Unexpected API response: %d", uploadResp.StatusCode()))
+		resp.Diagnostics.AddError("Error uploading local bundle", fmt.Sprintf("Unexpected API response: %d, body: %s", uploadResp.StatusCode(), string(uploadResp.Body)))
 		return
 	}
 
@@ -360,7 +360,7 @@ func (r *BundleLocalResource) Delete(ctx context.Context, req resource.DeleteReq
 	if deleteResp.StatusCode() != http.StatusOK && deleteResp.StatusCode() != http.StatusNoContent && deleteResp.StatusCode() != http.StatusNotFound {
 		resp.Diagnostics.AddError(
 			"Error deleting SSPI Bundle Local",
-			fmt.Sprintf("Unexpected response from API: %d", deleteResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", deleteResp.StatusCode(), string(deleteResp.Body)),
 		)
 		return
 	}

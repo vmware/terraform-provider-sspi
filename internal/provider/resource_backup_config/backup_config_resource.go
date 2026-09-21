@@ -187,14 +187,16 @@ func (r *BackupConfigResource) saveBackupConfig(ctx context.Context, data *Backu
 	}
 
 	// Fetch the current revision (if a backup config already exists) so this
-	// PUT isn't rejected by the backend's optimistic-locking check; a 404
-	// means no config exists yet, so the zero-value Revision is correct as-is.
+	// PUT isn't rejected by the backend's optimistic-locking check. No config
+	// existing yet is signaled by 204 No Content on this endpoint (confirmed
+	// live - NOT 404 like most other singleton/detail GETs in this API), in
+	// which case the zero-value Revision is correct as-is.
 	currentResp, err := r.client.GetBackupConfigWithResponse(ctx)
 	if err != nil {
 		diags.AddError("Error reading current SSPI Backup Configuration", "Could not read current backup configuration: "+err.Error())
 		return
 	}
-	if currentResp.StatusCode() != http.StatusNotFound {
+	if currentResp.StatusCode() != http.StatusNotFound && currentResp.StatusCode() != http.StatusNoContent {
 		if currentResp.JSON200 == nil {
 			diags.AddError("Error reading current SSPI Backup Configuration",
 				fmt.Sprintf("Unexpected API response: %d: %s", currentResp.StatusCode(), string(currentResp.Body)))
@@ -235,7 +237,7 @@ func (r *BackupConfigResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	if readResp.StatusCode() == http.StatusNotFound {
+	if readResp.StatusCode() == http.StatusNotFound || readResp.StatusCode() == http.StatusNoContent {
 		resp.State.RemoveResource(ctx)
 		return
 	}

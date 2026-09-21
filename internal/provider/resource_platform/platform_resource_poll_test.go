@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,6 +105,111 @@ func TestWaitForWorkflow_Failure(t *testing.T) {
 	}
 	if err := checkWorkflowResult(result); err == nil {
 		t.Fatal("expected checkWorkflowResult to report an error for a FAILED workflow, got nil")
+	}
+}
+
+// TestWaitForWorkflow_JobFailureWithoutTerminalState verifies that a failed
+// job (e.g. a precheck's "Check vCenter") is caught even when the appliance
+// leaves the overall WorkflowResult.State stuck at RUNNING - which is what
+// the real SSPI appliance does for a precheck that's awaiting a manual
+// "rerun precheck" rather than auto-transitioning to a terminal FAILED
+// state. Without this check waitForWorkflow would poll for the full
+// platformPollTimeout despite the failure already being visible per-job.
+func TestWaitForWorkflow_JobFailureWithoutTerminalState(t *testing.T) {
+	withFastPlatformPolling(t, time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sspi/platforms/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"phase": "PRECHECK",
+			"workflow_results": []map[string]any{
+				{
+					"display_name": "Pre Check Workflow",
+					"state":        "RUNNING",
+					"jobs": []map[string]any{
+						{"display_name": "Check SSPI basic infra", "state": "COMPLETED"},
+						{"display_name": "Check vCenter", "state": "FAILED", "details": "Insufficient per-host memory"},
+						{"display_name": "Check compatibility", "state": "NOT_STARTED"},
+					},
+				},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := api_client.NewClientWithResponses(srv.URL)
+	if err != nil {
+		t.Fatalf("failed to create api client: %s", err)
+	}
+	r := &PlatformResource{client: client}
+
+	result, err := r.waitForWorkflow(context.Background(), "platform-1")
+	if err != nil {
+		t.Fatalf("waitForWorkflow itself should not error when a job fails: %s", err)
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil result once a job fails")
+	}
+	if err := checkWorkflowResult(result); err == nil {
+		t.Fatal("expected checkWorkflowResult to report an error for a failed job, got nil")
+	} else if !strings.Contains(err.Error(), "Check vCenter") || !strings.Contains(err.Error(), "Insufficient per-host memory") {
+		t.Fatalf("expected error to name the failed job and its details, got: %s", err)
+	}
+}
+
+// TestWaitForWorkflow_FailureBehindNotStartedPlaceholder verifies a FAILED
+// precheck is caught even when it's NOT the last entry in workflow_results:
+// the real SSPI appliance appends a placeholder "Deployment Workflow" entry
+// at NOT_STARTED as soon as a platform is created, even if the precheck that
+// must precede it has already failed. Checking only the last entry (as
+// waitForWorkflow used to) would see NOT_STARTED - not terminal, no failed
+// jobs - and poll for the full platformPollTimeout despite the real failure
+// sitting in the first entry.
+func TestWaitForWorkflow_FailureBehindNotStartedPlaceholder(t *testing.T) {
+	withFastPlatformPolling(t, time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sspi/platforms/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"phase": "PRECHECK",
+			"workflow_results": []map[string]any{
+				{
+					"display_name": "Pre Check Workflow",
+					"state":        "FAILED",
+					"jobs": []map[string]any{
+						{"display_name": "Check network configuration", "state": "FAILED", "details": "FQDN mismatch"},
+					},
+				},
+				{
+					"display_name": "Deployment Workflow",
+					"state":        "NOT_STARTED",
+					"jobs": []map[string]any{
+						{"display_name": "vCenter Configuration", "state": "NOT_STARTED"},
+					},
+				},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := api_client.NewClientWithResponses(srv.URL)
+	if err != nil {
+		t.Fatalf("failed to create api client: %s", err)
+	}
+	r := &PlatformResource{client: client}
+
+	result, err := r.waitForWorkflow(context.Background(), "platform-1")
+	if err != nil {
+		t.Fatalf("waitForWorkflow itself should not error on a terminal FAILED state: %s", err)
+	}
+	if err := checkWorkflowResult(result); err == nil {
+		t.Fatal("expected checkWorkflowResult to report an error for the failed precheck, got nil")
+	} else if !strings.Contains(err.Error(), "Check network configuration") {
+		t.Fatalf("expected error to name the failed precheck job, got: %s", err)
 	}
 }
 

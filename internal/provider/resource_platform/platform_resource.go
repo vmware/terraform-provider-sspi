@@ -105,6 +105,7 @@ type PlatformResourceModel struct {
 	AddonIDs         types.List   `tfsdk:"addon_ids"`
 	AdminPassword    types.String `tfsdk:"admin_password"`
 	AuditPassword    types.String `tfsdk:"audit_password"`
+	ForceDelete      types.Bool   `tfsdk:"force_delete"`
 
 	Status types.String `tfsdk:"status"`
 }
@@ -282,6 +283,12 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 				MarkdownDescription: "The audit user password for the platform. If unset, the platform default is used.",
 				Optional:            true,
 				Sensitive:           true,
+			},
+			"force_delete": schema.BoolAttribute{
+				MarkdownDescription: "When `true`, deletion passes `action=force_delete`, bypassing graceful teardown " +
+					"steps and forcibly deleting the platform deployment and database records, ignoring standard " +
+					"cleanup failures. Has no effect other than on `Delete`.",
+				Optional: true,
 			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "The current deployment status.",
@@ -486,8 +493,11 @@ func int64PtrToIntPtr(v types.Int64) *int {
 	return Ptr(int(v.ValueInt64()))
 }
 
-// waitForWorkflow polls GET /sspi/platforms/{id}/status until the most recent
-// workflow result reaches a terminal state, or until platformPollTimeout elapses.
+// waitForWorkflow polls GET /sspi/platforms/{id}/status until any workflow
+// result reaches a bad terminal state or a failed job (checked across all
+// entries, since a failure can sit behind a not-yet-started placeholder
+// entry for the next stage), the last entry reaches a successful terminal
+// state, or platformPollTimeout elapses.
 func (r *PlatformResource) waitForWorkflow(ctx context.Context, platformID string) (*api_client.WorkflowResult, error) {
 	deadline := time.Now().Add(platformPollTimeout)
 	for {
@@ -504,16 +514,39 @@ func (r *PlatformResource) waitForWorkflow(ctx context.Context, platformID strin
 		}
 
 		if results := statusResp.JSON200.WorkflowResults; results != nil && len(*results) > 0 {
+			// A failed precheck (e.g. "Check network configuration") does not stop the
+			// appliance from appending a placeholder later entry for the next stage
+			// (e.g. a "Deployment Workflow" sitting at NOT_STARTED) - so the failure can
+			// be anywhere in the list, not just the last entry. Scan all of them for a
+			// bad terminal state or a failed job first; only trust "last entry" position
+			// for detecting overall success below.
+			for _, wr := range *results {
+				if wr.State != nil {
+					switch *wr.State {
+					case api_client.WorkflowResultStateFAILED,
+						api_client.WorkflowResultStateABORTED,
+						api_client.WorkflowResultStateSTOPPED,
+						api_client.WorkflowResultStateROLLBACKFAILED,
+						api_client.WorkflowResultStateROLLBACKSTOPPED:
+						return &wr, nil
+					}
+				}
+				// A precheck job failure (e.g. "Check vCenter") leaves the SSPI appliance
+				// waiting for a manual "rerun precheck" instead of moving the overall
+				// WorkflowResult.State to a terminal value - it can sit in RUNNING
+				// indefinitely. Without this check, Terraform would poll silently for
+				// the full platformPollTimeout even though the failure (and its details)
+				// is already visible per-job.
+				if hasFailedJob(wr) {
+					return &wr, nil
+				}
+			}
+
 			latest := (*results)[len(*results)-1]
 			if latest.State != nil {
 				switch *latest.State {
 				case api_client.WorkflowResultStateCOMPLETED,
-					api_client.WorkflowResultStateFAILED,
-					api_client.WorkflowResultStateABORTED,
-					api_client.WorkflowResultStateSTOPPED,
-					api_client.WorkflowResultStateROLLBACKCOMPLETED,
-					api_client.WorkflowResultStateROLLBACKFAILED,
-					api_client.WorkflowResultStateROLLBACKSTOPPED:
+					api_client.WorkflowResultStateROLLBACKCOMPLETED:
 					return &latest, nil
 				}
 			}
@@ -525,6 +558,28 @@ func (r *PlatformResource) waitForWorkflow(ctx context.Context, platformID strin
 		case <-time.After(platformPollInterval):
 		}
 	}
+}
+
+// hasFailedJob reports whether any job within a workflow result has reached a
+// failure state, regardless of the overall WorkflowResult.State.
+func hasFailedJob(result api_client.WorkflowResult) bool {
+	if result.Jobs == nil {
+		return false
+	}
+	for _, job := range *result.Jobs {
+		if job.State == nil {
+			continue
+		}
+		switch *job.State {
+		case api_client.JobResultStateFAILED,
+			api_client.JobResultStateABORTED,
+			api_client.JobResultStateSTOPPED,
+			api_client.JobResultStateROLLBACKFAILED,
+			api_client.JobResultStateROLLBACKSTOPPED:
+			return true
+		}
+	}
+	return false
 }
 
 // checkWorkflowResult returns a human-readable error if the workflow did not complete successfully.
@@ -544,7 +599,19 @@ func checkWorkflowResult(result *api_client.WorkflowResult) error {
 	details := ""
 	if result.Jobs != nil {
 		for _, job := range *result.Jobs {
-			if job.State != nil && (*job.State == api_client.JobResultStateFAILED) {
+			if job.State == nil {
+				continue
+			}
+			failed := false
+			switch *job.State {
+			case api_client.JobResultStateFAILED,
+				api_client.JobResultStateABORTED,
+				api_client.JobResultStateSTOPPED,
+				api_client.JobResultStateROLLBACKFAILED,
+				api_client.JobResultStateROLLBACKSTOPPED:
+				failed = true
+			}
+			if failed {
 				jobName := "job"
 				if job.DisplayName != nil {
 					jobName = *job.DisplayName
@@ -677,7 +744,7 @@ func (r *PlatformResource) readPlatform(ctx context.Context, platformID string, 
 	if readResp.JSON200 == nil {
 		diags.AddError(
 			"Error reading SSP Platform instance",
-			fmt.Sprintf("Unexpected response from API: %d", readResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", readResp.StatusCode(), string(readResp.Body)),
 		)
 		return false
 	}
@@ -830,7 +897,7 @@ func (r *PlatformResource) Update(ctx context.Context, req resource.UpdateReques
 	if currentResp.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error reading current SSP Platform instance",
-			fmt.Sprintf("Unexpected response from API: %d", currentResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", currentResp.StatusCode(), string(currentResp.Body)),
 		)
 		return
 	}
@@ -898,7 +965,13 @@ func (r *PlatformResource) Delete(ctx context.Context, req resource.DeleteReques
 	platformLcmMu.Lock()
 	defer platformLcmMu.Unlock()
 
-	deleteResp, err := r.client.DeletePlatformWithResponse(ctx, data.ID.ValueString(), &api_client.DeletePlatformParams{})
+	deleteParams := &api_client.DeletePlatformParams{}
+	if data.ForceDelete.ValueBool() {
+		action := api_client.ForceDelete
+		deleteParams.Action = &action
+	}
+
+	deleteResp, err := r.client.DeletePlatformWithResponse(ctx, data.ID.ValueString(), deleteParams)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting SSP Platform instance",
@@ -910,7 +983,7 @@ func (r *PlatformResource) Delete(ctx context.Context, req resource.DeleteReques
 	if deleteResp.StatusCode() != http.StatusOK && deleteResp.StatusCode() != http.StatusAccepted && deleteResp.StatusCode() != http.StatusNoContent && deleteResp.StatusCode() != http.StatusNotFound {
 		resp.Diagnostics.AddError(
 			"Error deleting SSP Platform instance",
-			fmt.Sprintf("Unexpected response from API: %d", deleteResp.StatusCode()),
+			fmt.Sprintf("Unexpected response from API: %d, body: %s", deleteResp.StatusCode(), string(deleteResp.Body)),
 		)
 		return
 	}
