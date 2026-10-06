@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -42,6 +43,63 @@ var (
 	_ resource.ResourceWithImportState = &BundleLocalResource{}
 )
 
+// uploadProgressPollInterval controls how often pollUploadProgressByName
+// checks the appliance's own record of a still-uploading bundle.
+var uploadProgressPollInterval = 15 * time.Second
+
+// pollUploadProgressByName logs the appliance's own view of upload progress
+// for the bundle named filename, until stop is closed. Bytes written into
+// the local end of a tunneled/proxied connection can be accepted into local
+// or transport buffers well before the appliance actually receives them -
+// confirmed live: a client-side byte counter reported 100% sent while the
+// appliance's own record showed only 65% actually received before the
+// connection was later dropped. So progress is read from the appliance's
+// bundle list (matched by display name, since the bundle ID isn't known
+// until the upload request completes) rather than counted client-side.
+func (r *BundleLocalResource) pollUploadProgressByName(ctx context.Context, filename string, stop <-chan struct{}) {
+	ticker := time.NewTicker(uploadProgressPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		listResp, err := r.client.GetBundlesWithResponse(ctx, &depot_client.GetBundlesParams{})
+		if err != nil || listResp.JSON200 == nil || listResp.JSON200.Results == nil {
+			continue
+		}
+
+		// Several bundles can share the same display name across retries;
+		// take the most recently created one still actually uploading.
+		var latest *depot_client.Bundle
+		for _, b := range *listResp.JSON200.Results {
+			if b.DisplayName == nil || *b.DisplayName != filename {
+				continue
+			}
+			if b.Status == nil || *b.Status != depot_client.INPROGRESS {
+				continue
+			}
+			if latest == nil || (b.UnderscoreCreateTime != nil && latest.UnderscoreCreateTime != nil && *b.UnderscoreCreateTime > *latest.UnderscoreCreateTime) {
+				bCopy := b
+				latest = &bCopy
+			}
+		}
+		if latest == nil {
+			continue
+		}
+
+		percent := 0
+		if latest.Progress != nil {
+			percent = *latest.Progress
+		}
+		tflog.Info(ctx, fmt.Sprintf("Upload progress: %d%%", percent))
+	}
+}
+
 // NewBundleLocalResource is a helper function to simplify the provider implementation.
 func NewBundleLocalResource() resource.Resource {
 	return &BundleLocalResource{}
@@ -50,6 +108,9 @@ func NewBundleLocalResource() resource.Resource {
 // BundleLocalResource is the resource implementation.
 type BundleLocalResource struct {
 	client *depot_client.ClientWithResponses
+	// uploadClient has a long HTTP timeout suited to multi-GB uploads; client
+	// keeps the provider's short default for everything else.
+	uploadClient *depot_client.ClientWithResponses
 }
 
 // BundleLocalResourceModel describes the resource data model.
@@ -117,6 +178,12 @@ func (r *BundleLocalResource) Configure(ctx context.Context, req resource.Config
 	}
 
 	r.client = clientProvider.GetDepot()
+	r.uploadClient = r.client
+	if up, ok := req.ProviderData.(interface {
+		GetDepotUpload() *depot_client.ClientWithResponses
+	}); ok && up.GetDepotUpload() != nil {
+		r.uploadClient = up.GetDepotUpload()
+	}
 	if r.client == nil {
 		resp.Diagnostics.AddError(
 			"SSPI Appliance Not Configured",
@@ -174,16 +241,34 @@ func (r *BundleLocalResource) Create(ctx context.Context, req resource.CreateReq
 		pw.Close()
 	}()
 
-	uploadResp, err := r.client.UploadLocalBundleWithBodyWithResponse(
+	// Uploads can take well over an hour on a slow/tunneled connection, during
+	// which the only way to see real progress is the appliance's own record
+	// (see pollUploadProgressByName) - there's no bundle ID to query directly
+	// until this request completes, so it's found by matching filename.
+	stopProgress := make(chan struct{})
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		r.pollUploadProgressByName(ctx, filepath.Base(filePath), stopProgress)
+	}()
+	defer func() {
+		close(stopProgress)
+		<-progressDone
+	}()
+
+	uploadResp, err := r.uploadClient.UploadLocalBundleWithBodyWithResponse(
 		ctx,
 		&depot_client.UploadLocalBundleParams{},
 		contentType,
 		pr,
 	)
-	if writeErr := <-writeErrCh; writeErr != nil {
-		resp.Diagnostics.AddError("Error uploading local bundle", writeErr.Error())
-		return
-	}
+	// When the server rejects the upload quickly (e.g. a bad bundle signature),
+	// the HTTP client stops reading the request body as soon as it has the
+	// response, which makes the writer goroutine's io.Copy above fail with a
+	// generic "closed pipe" error. Check the real response first so that error
+	// isn't reported instead of the server's actual diagnostic; only fall back
+	// to it when there's no usable response to explain what happened.
+	writeErr := <-writeErrCh
 	if err != nil {
 		resp.Diagnostics.AddError("Error uploading local bundle", err.Error())
 		return
@@ -193,21 +278,37 @@ func (r *BundleLocalResource) Create(ctx context.Context, req resource.CreateReq
 		resp.Diagnostics.AddError("Error uploading local bundle", fmt.Sprintf("Unexpected API response: %d, body: %s", uploadResp.StatusCode(), string(uploadResp.Body)))
 		return
 	}
+	if writeErr != nil {
+		resp.Diagnostics.AddError("Error uploading local bundle", writeErr.Error())
+		return
+	}
 
-	if uploadResp.JSON202 == nil || uploadResp.JSON202.Id == nil {
-		// Falling back to a locally-derived ID (e.g. the filename) would create a
-		// resource whose ID the Depot doesn't recognize, guaranteeing a 404 on the
-		// very next Read/Delete; fail loudly instead so the upload can be retried.
+	// AsyncApiResponse.Id is a job/request-tracking identifier for this async
+	// operation, NOT the depot bundle's own ID - confirmed live: polling
+	// GET /sspi/bundles/{that id} 404s (same bug already found and fixed in
+	// sspi_installer_bundle_remote). Use status_url instead, which is of the
+	// form /sspi/bundles/{real-bundle-id}; extract the real ID from it so
+	// polling/state/Read/Delete all target the actual bundle.
+	if uploadResp.JSON202 == nil || uploadResp.JSON202.StatusUrl == nil {
 		resp.Diagnostics.AddError(
 			"Error uploading local bundle",
-			fmt.Sprintf("Bundle upload was accepted (HTTP %d) but the API did not return a bundle ID: %s", uploadResp.StatusCode(), string(uploadResp.Body)),
+			fmt.Sprintf("Bundle upload was accepted (HTTP %d) but the API did not return a status_url: %s", uploadResp.StatusCode(), string(uploadResp.Body)),
 		)
 		return
 	}
-	data.ID = types.StringValue(*uploadResp.JSON202.Id)
-	data.PackageID = types.StringValue(*uploadResp.JSON202.Id)
+	bundleID := lastPathSegment(*uploadResp.JSON202.StatusUrl)
+	if bundleID == "" {
+		resp.Diagnostics.AddError(
+			"Error uploading local bundle",
+			fmt.Sprintf("Bundle upload was accepted (HTTP %d) but no bundle ID could be extracted from status_url %q", uploadResp.StatusCode(), *uploadResp.JSON202.StatusUrl),
+		)
+		return
+	}
+	data.ID = types.StringValue(bundleID)
+	data.PackageID = types.StringValue(bundleID)
 
 	data.Status = types.StringValue("UPLOADED")
+	data.Version = types.StringNull()
 	tflog.Trace(ctx, "Uploaded local SSPI bundle", map[string]interface{}{"id": data.ID.ValueString()})
 
 	// The upload is async: file validation/extraction happens server-side
@@ -234,6 +335,17 @@ func (r *BundleLocalResource) Create(ctx context.Context, req resource.CreateReq
 	}
 }
 
+// lastPathSegment returns the final non-empty segment of a URL path, e.g.
+// "/sspi/bundles/abc-123" or "/sspi/bundles/abc-123/" -> "abc-123".
+func lastPathSegment(u string) string {
+	trimmed := strings.TrimRight(u, "/")
+	idx := strings.LastIndex(trimmed, "/")
+	if idx == -1 {
+		return trimmed
+	}
+	return trimmed[idx+1:]
+}
+
 // waitForBundleReady polls GET /sspi/bundles/{id} until the bundle's status
 // reaches a terminal state, returning an error if it failed.
 func (r *BundleLocalResource) waitForBundleReady(ctx context.Context, id string) (*depot_client.BundleStatus, error) {
@@ -250,6 +362,18 @@ func (r *BundleLocalResource) waitForBundleReady(ctx context.Context, id string)
 		if readResp.JSON200 == nil {
 			return nil, fmt.Errorf("unexpected empty response polling status for bundle %s (HTTP %d)", id, readResp.StatusCode())
 		}
+
+		// Surfaces the appliance's own validation/processing progress (not just
+		// "still connected") on the terminal with TF_LOG=INFO set.
+		percent := 0
+		if p := readResp.JSON200.Progress; p != nil {
+			percent = *p
+		}
+		msg := fmt.Sprintf("Processing progress: %d%%", percent)
+		if m := readResp.JSON200.Message; m != nil && *m != "" {
+			msg += " - " + *m
+		}
+		tflog.Info(ctx, msg)
 
 		if status := readResp.JSON200.Status; status != nil && *status != depot_client.INPROGRESS {
 			switch *status {

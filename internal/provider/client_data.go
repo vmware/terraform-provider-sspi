@@ -12,13 +12,17 @@ import (
 
 // ClientData is the shared provider configuration passed to resources and data sources.
 type ClientData struct {
-	API     *api_client.ClientWithResponses
-	Depot   *depot_client.ClientWithResponses
-	IAM     *iam_client.ClientWithResponses
-	Upgrade *upgrade_client.ClientWithResponses
+	API   *api_client.ClientWithResponses
+	Depot *depot_client.ClientWithResponses
+	// DepotUpload shares Depot's endpoint and credentials but has a much longer
+	// HTTP timeout, for streaming large bundle uploads.
+	DepotUpload *depot_client.ClientWithResponses
+	IAM         *iam_client.ClientWithResponses
+	Upgrade     *upgrade_client.ClientWithResponses
 }
 
-func (c *ClientData) GetAPI() *api_client.ClientWithResponses         { return c.API }
-func (c *ClientData) GetDepot() *depot_client.ClientWithResponses     { return c.Depot }
-func (c *ClientData) GetIAM() *iam_client.ClientWithResponses         { return c.IAM }
-func (c *ClientData) GetUpgrade() *upgrade_client.ClientWithResponses { return c.Upgrade }
+func (c *ClientData) GetAPI() *api_client.ClientWithResponses           { return c.API }
+func (c *ClientData) GetDepot() *depot_client.ClientWithResponses       { return c.Depot }
+func (c *ClientData) GetIAM() *iam_client.ClientWithResponses           { return c.IAM }
+func (c *ClientData) GetUpgrade() *upgrade_client.ClientWithResponses   { return c.Upgrade }
+func (c *ClientData) GetDepotUpload() *depot_client.ClientWithResponses { return c.DepotUpload }
