@@ -33,6 +33,7 @@ import (
 	resource_backup "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup"
 	resource_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup_config"
 	resource_bundle_local "github.com/vmware/terraform-provider-sspi/internal/provider/resource_bundle_local"
+	resource_bundle_remote "github.com/vmware/terraform-provider-sspi/internal/provider/resource_bundle_remote"
 	resource_ldap_identity_source "github.com/vmware/terraform-provider-sspi/internal/provider/resource_ldap_identity_source"
 	resource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/resource_platform"
 	resource_provider "github.com/vmware/terraform-provider-sspi/internal/provider/resource_provider"
@@ -40,6 +41,13 @@ import (
 	resource_restore "github.com/vmware/terraform-provider-sspi/internal/provider/resource_restore"
 	resource_upgrade "github.com/vmware/terraform-provider-sspi/internal/provider/resource_upgrade"
 	resource_user_password "github.com/vmware/terraform-provider-sspi/internal/provider/resource_user_password"
+)
+
+const (
+	// defaultHTTPTimeout bounds ordinary API calls.
+	defaultHTTPTimeout = 5 * time.Minute
+	// uploadHTTPTimeout bounds large bundle uploads; see Configure.
+	uploadHTTPTimeout = 180 * time.Minute
 )
 
 var _ provider.Provider = &SspiProvider{}
@@ -170,8 +178,25 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		transport.DialContext = cd.DialContext
 	}
 
+	// Default client for ordinary API calls. http.Client.Timeout covers the
+	// entire round trip, so keep it short enough that a dead appliance or proxy
+	// fails fast instead of hanging plan/apply.
 	httpClient := &http.Client{
-		Timeout:   5 * time.Minute,
+		Timeout:   defaultHTTPTimeout,
+		Transport: transport,
+	}
+
+	// Separate client for streaming large request bodies, i.e.
+	// sspi_installer_bundle_local's multi-GB bundle upload. The timeout covers
+	// however long it takes to stream the body up. 5 minutes was observed live
+	// to kill a 20GB upload mid-stream ("io: read/write on closed pipe") on
+	// anything slower than a very fast LAN; a 90-minute attempt over a
+	// ~2.9MB/s tunneled connection still ran out of time at 78% ("Client.Timeout
+	// exceeded while awaiting headers"). 180 minutes leaves real headroom for
+	// slow links while still bounding a truly dead connection. Only the depot
+	// upload uses this client so the long timeout doesn't apply to other calls.
+	uploadHTTPClient := &http.Client{
+		Timeout:   uploadHTTPTimeout,
 		Transport: transport,
 	}
 
@@ -203,6 +228,17 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		return
 	}
 	clients.Depot = depotClient
+
+	depotUploadClient, err := depot_client.NewClientWithResponses(
+		endpoint,
+		depot_client.WithHTTPClient(uploadHTTPClient),
+		depot_client.WithRequestEditorFn(authEditor),
+	)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid SSPI Appliance Configuration", fmt.Sprintf("Unable to create SSPI Depot upload client: %s", err))
+		return
+	}
+	clients.DepotUpload = depotUploadClient
 
 	iamClient, err := iam_client.NewClientWithResponses(
 		endpoint,
@@ -237,6 +273,7 @@ func (p *SspiProvider) Resources(ctx context.Context) []func() resource.Resource
 		resource_provider.NewProviderResource,
 		resource_platform.NewPlatformResource,
 		resource_bundle_local.NewBundleLocalResource,
+		resource_bundle_remote.NewBundleRemoteResource,
 		resource_ldap_identity_source.NewLdapIdentitySourceResource,
 		resource_backup_config.NewBackupConfigResource,
 		resource_recurring_backup_config.NewRecurringBackupConfigResource,
