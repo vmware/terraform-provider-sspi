@@ -28,6 +28,7 @@ import (
 	"github.com/vmware/terraform-provider-sspi/internal/client/upgrade_client"
 	datasource_bundle "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_bundle"
 	datasource_platform "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_platform"
+	datasource_role_binding "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_role_binding"
 	datasource_upgrade_packages "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_upgrade_packages"
 	datasource_vsphere_provider "github.com/vmware/terraform-provider-sspi/internal/provider/datasource_vsphere_provider"
 	resource_backup "github.com/vmware/terraform-provider-sspi/internal/provider/resource_backup"
@@ -39,7 +40,9 @@ import (
 	resource_provider "github.com/vmware/terraform-provider-sspi/internal/provider/resource_provider"
 	resource_recurring_backup_config "github.com/vmware/terraform-provider-sspi/internal/provider/resource_recurring_backup_config"
 	resource_restore "github.com/vmware/terraform-provider-sspi/internal/provider/resource_restore"
+	resource_role_binding "github.com/vmware/terraform-provider-sspi/internal/provider/resource_role_binding"
 	resource_upgrade "github.com/vmware/terraform-provider-sspi/internal/provider/resource_upgrade"
+	resource_upgrade_manager "github.com/vmware/terraform-provider-sspi/internal/provider/resource_upgrade_manager"
 	resource_user_password "github.com/vmware/terraform-provider-sspi/internal/provider/resource_user_password"
 )
 
@@ -275,10 +278,12 @@ func (p *SspiProvider) Resources(ctx context.Context) []func() resource.Resource
 		resource_bundle_local.NewBundleLocalResource,
 		resource_bundle_remote.NewBundleRemoteResource,
 		resource_ldap_identity_source.NewLdapIdentitySourceResource,
+		resource_role_binding.NewRoleBindingResource,
 		resource_backup_config.NewBackupConfigResource,
 		resource_recurring_backup_config.NewRecurringBackupConfigResource,
 		resource_user_password.NewUserPasswordResource,
 		resource_upgrade.NewUpgradeResource,
+		resource_upgrade_manager.NewUpgradeManagerResource,
 		resource_backup.NewBackupResource,
 		resource_restore.NewRestoreResource,
 	}
@@ -288,6 +293,7 @@ func (p *SspiProvider) DataSources(ctx context.Context) []func() datasource.Data
 	return []func() datasource.DataSource{
 		datasource_vsphere_provider.NewVsphereProviderDataSource,
 		datasource_platform.NewPlatformDataSource,
+		datasource_role_binding.NewRoleBindingDataSource,
 		datasource_bundle.NewBundleDataSource,
 		datasource_upgrade_packages.NewUpgradePackagesDataSource,
 	}

@@ -9,7 +9,7 @@ This provider (`provider "sspi"`) automates the SSPI appliance:
 1. **vCenter Provider Registration**: registering vCenter target providers (`sspi_vsphere_provider`) for SSP/Avi Operations cluster deployment.
 2. **Software Package Management**: uploading `.tar.gz` software packages to the SSPI Depot (`sspi_installer_bundle_local`).
 3. **Cluster Deployment & Lifecycle**: pre-deployment validation, provisioning SSP (`ATP`) and Avi Operations clusters, scaling worker nodes/form factors, updating IP pools, and teardown (`sspi_platform`).
-4. **Identity & Access**: LDAP identity source integration (`sspi_ldap_identity_source`) and local user password management (`sspi_user_password`).
+4. **Identity & Access**: LDAP identity source integration (`sspi_ldap_identity_source`), role bindings for LDAP users and groups (`sspi_role_binding`), and local user password management (`sspi_user_password`).
 5. **Backup/Restore**: SSPI appliance backup target configuration and recurring backup schedules (`sspi_installer_backup_config`, `sspi_installer_recurring_backup_config`).
 
 For Day-2 operational workflows against a **deployed** SSP cluster (site onboarding, security feature
@@ -150,6 +150,7 @@ resource "sspi_platform" "ssp_cluster" {
 | `sspi_installer_backup_config` | Configures SSPI appliance SFTP backup target (`/sspi/backup/config`) |
 | `sspi_installer_recurring_backup_config` | Configures SSPI appliance recurring backup schedule (`/sspi/backup/recurring/config`) |
 | `sspi_ldap_identity_source` | Configures SSPI appliance LDAP directory integration (`/sspi/iam/ldap-identity-sources`) |
+| `sspi_role_binding` | Grants roles to remote LDAP users and groups (`/sspi/iam/role-bindings`) |
 | `sspi_user_password` | Manages local user account password resets and changes (`/sspi/iam/*`) |
 
 | Data Source | Description |
@@ -157,6 +158,7 @@ resource "sspi_platform" "ssp_cluster" {
 | `data.sspi_vsphere_provider` | Fetches details of a registered vCenter provider |
 | `data.sspi_platform` | Reads SSPI platform configuration and status |
 | `data.sspi_bundle` | Reads SSPI Depot package bundle metadata |
+| `data.sspi_role_binding` | Reads a role binding by id or by entity name |
 
 ---
 

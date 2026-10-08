@@ -96,7 +96,7 @@ func (r *BundleLocalResource) pollUploadProgressByName(ctx context.Context, file
 		if latest.Progress != nil {
 			percent = *latest.Progress
 		}
-		tflog.Info(ctx, fmt.Sprintf("Upload progress: %d%%", percent))
+		tflog.Info(ctx, fmt.Sprintf("[%s] Upload progress: %d%%", filename, percent))
 	}
 }
 
@@ -316,7 +316,7 @@ func (r *BundleLocalResource) Create(ctx context.Context, req resource.CreateReq
 	// terminal state (READY, or a failure state). Wait for that before
 	// reporting Create() success, so a downstream sspi_platform.ssp_bundle_id
 	// reference in the same apply doesn't race a still-validating bundle.
-	status, waitErr := r.waitForBundleReady(ctx, data.ID.ValueString())
+	status, waitErr := r.waitForBundleReady(ctx, filepath.Base(filePath), data.ID.ValueString())
 	if status != nil {
 		data.Status = types.StringValue(string(*status))
 	}
@@ -348,7 +348,7 @@ func lastPathSegment(u string) string {
 
 // waitForBundleReady polls GET /sspi/bundles/{id} until the bundle's status
 // reaches a terminal state, returning an error if it failed.
-func (r *BundleLocalResource) waitForBundleReady(ctx context.Context, id string) (*depot_client.BundleStatus, error) {
+func (r *BundleLocalResource) waitForBundleReady(ctx context.Context, name, id string) (*depot_client.BundleStatus, error) {
 	deadline := time.Now().Add(bundlePollTimeout)
 	for {
 		if time.Now().After(deadline) {
@@ -369,7 +369,7 @@ func (r *BundleLocalResource) waitForBundleReady(ctx context.Context, id string)
 		if p := readResp.JSON200.Progress; p != nil {
 			percent = *p
 		}
-		msg := fmt.Sprintf("Processing progress: %d%%", percent)
+		msg := fmt.Sprintf("[%s] Processing progress: %d%%", name, percent)
 		if m := readResp.JSON200.Message; m != nil && *m != "" {
 			msg += " - " + *m
 		}
