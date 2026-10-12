@@ -3,19 +3,11 @@ name: Unit Tests (sspi)
 
 on:
   pull_request:
-    paths:
-      - 'internal/**'
-      - 'main.go'
-      - '.github/workflows/unit-tests-sspi.yml'
   push:
     branches:
       - main
       - 'branch_*'
       - 'release-*'
-    paths:
-      - 'internal/**'
-      - 'main.go'
-      - '.github/workflows/unit-tests-sspi.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
