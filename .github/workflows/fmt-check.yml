@@ -3,19 +3,11 @@ name: Formatting check (sspi)
 
 on:
   pull_request:
-    paths:
-      - 'internal/**'
-      - 'main.go'
-      - '.github/workflows/fmt-check.yml'
   push:
     branches:
       - main
       - 'branch_*'
       - 'release-*'
-    paths:
-      - 'internal/**'
-      - 'main.go'
-      - '.github/workflows/fmt-check.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
