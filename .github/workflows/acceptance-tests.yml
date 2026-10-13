@@ -1,0 +1,148 @@
+---
+name: Acceptance Tests
+
+# Runs the live SSPI acceptance suite (TestAcc*) against a real SSPI appliance. Mirrors
+# `make testacc` -- see TESTING.md for what these tests cover and the full env var contract.
+#
+# Two ways to run it:
+#   1. On demand (workflow_dispatch): type the testbed details into the "Run workflow" form --
+#      host, credentials, optional object-ID overrides. Nothing needs to be pre-configured as a
+#      secret for this path; it's meant for "I have a testbed right now, point the suite at it."
+#   2. On a schedule (weekly cron): no inputs are available for a scheduled run, so it falls back
+#      to repo/environment secrets of the same names (SSPI_HOST, SSPI_USERNAME, ...). Only wire
+#      those up once you have a long-lived testbed worth testing against every week.
+#
+# REQUIRES NETWORK REACHABILITY to the SSPI appliance from wherever this runs. GitHub-hosted
+# runners (ubuntu-latest) cannot reach an internal/VPN-only host directly. If the testbed you
+# give it isn't reachable from the public internet, either:
+#   - switch `runs-on` to a self-hosted runner that already has a route to it, or
+#   - fill in the jumphost_* inputs (or JUMPHOST_* secrets for the scheduled run) to open an SSH
+#     SOCKS5 tunnel first, same approach as the "SOCKS5 Proxy & Testbed Connectivity Setup"
+#     section in TESTING.md. The jump host's SSH private key must still be a secret
+#     (JUMPHOST_SSH_KEY) -- there's no safe way to paste a private key into a dispatch input.
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'   # Sunday 03:00 UTC -- offset from the other Sunday-00:00 weekly jobs
+  workflow_dispatch:
+    inputs:
+      sspi_host:
+        description: 'SSPI appliance URL, e.g. https://172.16.111.4'
+        required: true
+      sspi_username:
+        description: 'SSPI username'
+        required: false
+        default: 'admin'
+      sspi_password:
+        description: 'SSPI password'
+        required: true
+      sspi_insecure:
+        description: 'Skip TLS verification'
+        type: boolean
+        required: false
+        default: true
+      bundle_id:
+        description: 'SSP_TEST_BUNDLE_ID override (optional)'
+        required: false
+        default: ''
+      platform_id:
+        description: 'SSP_TEST_PLATFORM_ID override (optional)'
+        required: false
+        default: ''
+      vsphere_provider_id:
+        description: 'SSP_TEST_VSPHERE_PROVIDER_ID override (optional)'
+        required: false
+        default: ''
+      vsphere_provider_server:
+        description: 'SSP_TEST_VSPHERE_PROVIDER_SERVER override (optional)'
+        required: false
+        default: ''
+      vsphere_provider_user:
+        description: 'SSP_TEST_VSPHERE_PROVIDER_USER override (optional)'
+        required: false
+        default: ''
+      jumphost_host:
+        description: 'SOCKS5 jump host (optional -- leave blank if the testbed is directly reachable)'
+        required: false
+        default: ''
+      jumphost_user:
+        description: 'SSH user on the jump host (optional)'
+        required: false
+        default: ''
+      testargs:
+        description: 'Extra -run=... filter, e.g. -run=TestAccPlatformDataSource'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+
+      - name: Mask sensitive inputs
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "::add-mask::${{ inputs.sspi_password }}"
+
+      - name: Resolve testbed details
+        id: testbed
+        run: |
+          echo "jumphost_host=${{ inputs.jumphost_host || secrets.JUMPHOST_HOST }}" >> "$GITHUB_OUTPUT"
+          echo "jumphost_user=${{ inputs.jumphost_user || secrets.JUMPHOST_USER }}" >> "$GITHUB_OUTPUT"
+
+      - name: Open SOCKS5 tunnel to jump host
+        if: steps.testbed.outputs.jumphost_host != ''
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.JUMPHOST_SSH_KEY }}" > ~/.ssh/jumphost_key
+          chmod 600 ~/.ssh/jumphost_key
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/jumphost_key \
+            "${{ steps.testbed.outputs.jumphost_user }}@${{ steps.testbed.outputs.jumphost_host }}" -D 9999 -N &
+          # Give the tunnel a moment to establish before tests start.
+          sleep 5
+
+      - name: Run acceptance tests
+        env:
+          TF_ACC: '1'
+          SSPI_HOST: ${{ inputs.sspi_host || secrets.SSPI_HOST }}
+          SSPI_USERNAME: ${{ inputs.sspi_username || secrets.SSPI_USERNAME }}
+          SSPI_PASSWORD: ${{ inputs.sspi_password || secrets.SSPI_PASSWORD }}
+          SSPI_INSECURE: ${{ (github.event_name == 'workflow_dispatch' && inputs.sspi_insecure) || 'true' }}
+          SSP_TEST_BUNDLE_ID: ${{ inputs.bundle_id || secrets.SSP_TEST_BUNDLE_ID }}
+          SSP_TEST_PLATFORM_ID: ${{ inputs.platform_id || secrets.SSP_TEST_PLATFORM_ID }}
+          SSP_TEST_VSPHERE_PROVIDER_ID: ${{ inputs.vsphere_provider_id || secrets.SSP_TEST_VSPHERE_PROVIDER_ID }}
+          SSP_TEST_VSPHERE_PROVIDER_SERVER: ${{ inputs.vsphere_provider_server || secrets.SSP_TEST_VSPHERE_PROVIDER_SERVER }}
+          SSP_TEST_VSPHERE_PROVIDER_USER: ${{ inputs.vsphere_provider_user || secrets.SSP_TEST_VSPHERE_PROVIDER_USER }}
+          ALL_PROXY: ${{ steps.testbed.outputs.jumphost_host != '' && 'socks5h://127.0.0.1:9999' || '' }}
+          HTTPS_PROXY: ${{ steps.testbed.outputs.jumphost_host != '' && 'socks5h://127.0.0.1:9999' || '' }}
+          NO_PROXY: '127.0.0.1,localhost,::1'
+        run: |
+          set -euo pipefail
+          go test ./... -v -count=1 -parallel=4 -timeout=45m ${{ inputs.testargs }} 2>&1 | tee acceptance-tests.log
+          {
+            echo "## Acceptance test run"
+            echo ""
+            echo '```'
+            grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|PASS)' acceptance-tests.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archive full log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-test-log
+          path: acceptance-tests.log
+          retention-days: 30

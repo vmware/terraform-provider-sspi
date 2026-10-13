@@ -92,6 +92,54 @@ TF_ACC=1 go test -v ./internal/provider -run=TestAccVsphereProviderResource -tim
 
 ---
 
+## Running Acceptance Tests Before Submitting a PR
+
+There's no automatic per-PR acceptance-test trigger yet (that depends on the shared Jenkins/CiBot
+work landing — see the project's CI discussion). Until then, this is how to self-check a change
+against a real SSPI appliance before opening or updating a PR:
+
+### Option 1 — Run locally
+
+```shell
+export SSPI_HOST="https://<your-testbed>"
+export SSPI_USERNAME="admin"
+export SSPI_PASSWORD="..."
+export SSPI_INSECURE="true"
+make testacc
+```
+
+Fastest feedback loop — no CI latency, and you see failures in your own terminal.
+
+### Option 2 — Run via GitHub Actions against your branch
+
+The "Acceptance Tests" workflow (`.github/workflows/acceptance-tests.yml`) supports
+`workflow_dispatch`, which can run from **any branch**, including a feature branch before a PR
+exists:
+
+1. Push your branch.
+2. Actions tab → "Acceptance Tests" → **Run workflow** → pick your branch.
+3. Fill in `sspi_host`/`sspi_username`/`sspi_password` (and any `SSP_TEST_*` overrides) in the form.
+4. Check the run's summary and log; once it's green, open or update the PR.
+
+This gives you a logged, shareable CI run instead of just local terminal output, but you still have
+to trigger it yourself each time — it isn't wired to fire automatically on push or PR open.
+
+### What happens if nothing is configured
+
+Both options above **skip cleanly rather than failing** if the SSPI connection details aren't set.
+`testAccPreCheck` (`internal/provider/provider_test.go`) calls `t.Skip(...)` if `SSPI_HOST`
+(or `SSPI_ENDPOINT`), `SSPI_USERNAME`, or `SSPI_PASSWORD` is empty — every `TestAcc*` test reports
+`SKIP` with a message naming the missing variable, and the overall run still reports success
+(exit code 0). Separately, if `TF_ACC` itself isn't set, the `terraform-plugin-testing` framework
+skips every acceptance test before `testAccPreCheck` even runs, for the same reason.
+
+The one case that **does** fail rather than skip: `SSPI_HOST` is set but wrong or unreachable —
+then the test gets past the `t.Skip()` checks and fails with a real connection/HTTP error. So a
+green "Acceptance Tests" run with all tests reported `SKIP` means "nothing was actually
+configured," not "the tests passed" — check the log, not just the overall pass/fail status.
+
+---
+
 ## SOCKS5 Proxy & Testbed Connectivity Setup
 
 When running acceptance tests against isolated lab environments (e.g., Nimbus testbeds accessible only via a jump host), route HTTP traffic through an SSH SOCKS5 proxy tunnel.
