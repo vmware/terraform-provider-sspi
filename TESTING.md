@@ -94,9 +94,8 @@ TF_ACC=1 go test -v ./internal/provider -run=TestAccVsphereProviderResource -tim
 
 ## Running Acceptance Tests Before Submitting a PR
 
-There's no automatic per-PR acceptance-test trigger yet (that depends on the shared Jenkins/CiBot
-work landing — see the project's CI discussion). Until then, this is how to self-check a change
-against a real SSPI appliance before opening or updating a PR:
+There's no automatic per-PR acceptance-test trigger yet. Until then, this is how to self-check a
+change against a real SSPI appliance before opening or updating a PR:
 
 ### Option 1 — Run locally
 
