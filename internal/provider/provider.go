@@ -271,6 +271,17 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	resp.ResourceData = clients
 }
 
+// TODO(acceptance-test backlog): none of the resources have TestAcc* lifecycle
+// coverage against a live SSPI appliance (unit tests only): sspi_provider,
+// sspi_platform, sspi_bundle_local, sspi_bundle_remote,
+// sspi_ldap_identity_source, sspi_role_binding, sspi_backup_config,
+// sspi_recurring_backup_config, sspi_user_password, sspi_upgrade,
+// sspi_upgrade_manager, sspi_backup, sspi_restore. Same for two of the five
+// data sources: data.sspi_role_binding and data.sspi_upgrade_packages
+// (acceptance tests exist only for the vsphere_provider, platform and bundle
+// data sources). Deliberately deferred, tracked here rather than silently
+// forgotten. Add a sweeper before any of these gain real create/destroy
+// lifecycle tests, so a failed run doesn't leak objects in the shared lab.
 func (p *SspiProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		resource_provider.NewProviderResource,

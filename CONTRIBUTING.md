@@ -84,6 +84,8 @@ and commits.
 - Ensure unit tests pass (`go test ./...`).
 - Format all code with `gofmt -s`.
 - Update documentation in `docs/` as necessary (`make docs-lint-fix`).
+- If your change touches resource/data-source behavior, run the real acceptance suite against a live
+  SSPI appliance before submitting (see "Running Acceptance Tests Before Submitting a PR" in [`TESTING.md`](TESTING.md)).
 
 ## Reporting Bugs and Creating Issues
 
