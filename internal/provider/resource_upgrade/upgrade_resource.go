@@ -40,10 +40,10 @@ const upgradeSingletonID = "upgrade"
 // tests in this package can temporarily shrink them (save/restore) to
 // exercise the multi-iteration polling loop and deadline logic in
 // waitForOverallStatus/waitForPrechecksComplete in milliseconds instead of
-// the real 15s/90min production values.
+// the real 15s/180min production values.
 var (
 	upgradePollInterval = 15 * time.Second
-	upgradePollTimeout  = 90 * time.Minute
+	upgradePollTimeout  = 180 * time.Minute
 )
 
 // Ensure the implementation satisfies the expected interfaces.

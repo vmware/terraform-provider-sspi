@@ -49,8 +49,8 @@ import (
 const (
 	// defaultHTTPTimeout bounds ordinary API calls.
 	defaultHTTPTimeout = 5 * time.Minute
-	// uploadHTTPTimeout bounds large bundle uploads; see Configure.
-	uploadHTTPTimeout = 180 * time.Minute
+	// longRunningHTTPTimeout bounds large bundle uploads and long-running upgrades; see Configure.
+	longRunningHTTPTimeout = 180 * time.Minute
 )
 
 var _ provider.Provider = &SspiProvider{}
@@ -189,7 +189,7 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		Transport: transport,
 	}
 
-	// Separate client for streaming large request bodies, i.e.
+	// Separate long-timeout client for streaming large request bodies, i.e.
 	// sspi_installer_bundle_local's multi-GB bundle upload. The timeout covers
 	// however long it takes to stream the body up. 5 minutes was observed live
 	// to kill a 20GB upload mid-stream ("io: read/write on closed pipe") on
@@ -197,9 +197,10 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	// ~2.9MB/s tunneled connection still ran out of time at 78% ("Client.Timeout
 	// exceeded while awaiting headers"). 180 minutes leaves real headroom for
 	// slow links while still bounding a truly dead connection. Only the depot
-	// upload uses this client so the long timeout doesn't apply to other calls.
-	uploadHTTPClient := &http.Client{
-		Timeout:   uploadHTTPTimeout,
+	// upload and the upgrade client (long-running upgrades) use this client so
+	// the long timeout doesn't apply to other calls.
+	longRunningHTTPClient := &http.Client{
+		Timeout:   longRunningHTTPTimeout,
 		Transport: transport,
 	}
 
@@ -234,7 +235,7 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 
 	depotUploadClient, err := depot_client.NewClientWithResponses(
 		endpoint,
-		depot_client.WithHTTPClient(uploadHTTPClient),
+		depot_client.WithHTTPClient(longRunningHTTPClient),
 		depot_client.WithRequestEditorFn(authEditor),
 	)
 	if err != nil {
@@ -258,7 +259,7 @@ func (p *SspiProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 
 	upgradeClient, err := upgrade_client.NewClientWithResponses(
 		endpoint,
-		upgrade_client.WithHTTPClient(httpClient),
+		upgrade_client.WithHTTPClient(longRunningHTTPClient),
 		upgrade_client.WithRequestEditorFn(authEditor),
 	)
 	if err != nil {
