@@ -110,7 +110,7 @@ func testUnitPlatformConfigWithWorkerCount(host string, workerCount int) string 
 resource "sspi_platform" "test" {
   provider_id              = "vsphere-provider-1"
   display_name             = "tf-unit-test-platform"
-  form_factor              = "COMPACT"
+  form_factor              = "SMALL"
   ssp_type                 = "ATP"
   worker_count             = %d
   controller_count         = 3
@@ -147,7 +147,7 @@ func TestUnitPlatformResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("sspi_platform.test", "id", "platform-1"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "provider_id", "vsphere-provider-1"),
-					resource.TestCheckResourceAttr("sspi_platform.test", "form_factor", "COMPACT"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "form_factor", "SMALL"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "worker_count", "3"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "status", "DEPLOYMENT"),
 				),

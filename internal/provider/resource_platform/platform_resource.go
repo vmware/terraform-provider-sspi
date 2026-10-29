@@ -137,7 +137,7 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 				},
 			},
 			"form_factor": schema.StringAttribute{
-				MarkdownDescription: "The compute form factor of the platform. One of `COMPACT`, `MEDIUM`, `LARGE`, `EXTRA_LARGE`.",
+				MarkdownDescription: "The compute form factor of the platform. One of `SMALL`, `MEDIUM`, `LARGE`, `EXTRA_LARGE`.",
 				Required:            true,
 			},
 			"ssp_type": schema.StringAttribute{
