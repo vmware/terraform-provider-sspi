@@ -116,7 +116,7 @@ resource "sspi_platform" "ssp_cluster" {
   provider_id          = sspi_vsphere_provider.vc01.id
   display_name         = "Production-SSP-Cluster"
   ssp_type             = "ATP"
-  form_factor          = "MEDIUM" # real enum: COMPACT | MEDIUM | LARGE | EXTRA_LARGE
+  form_factor          = "MEDIUM" # real enum: SMALL | MEDIUM | LARGE | EXTRA_LARGE
   worker_count         = 3
   domain               = "corp.local"
   datacenter_id        = "datacenter-1"

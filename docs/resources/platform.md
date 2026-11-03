@@ -21,7 +21,7 @@ Manages a Security Service Platform (SSP) or Avi Operations instance deployment.
 - `display_name` (String) The instance name for the platform. Not editable after creation.
 - `dns_servers` (List of String) The DNS servers for the cluster.
 - `domain` (String) The search domain for the platform (skipped by DNS resolution).
-- `form_factor` (String) The compute form factor of the platform. One of `COMPACT`, `MEDIUM`, `LARGE`, `EXTRA_LARGE`.
+- `form_factor` (String) The compute form factor of the platform. One of `SMALL`, `MEDIUM`, `LARGE`, `EXTRA_LARGE`.
 - `ingress_fqdn` (String) The FQDN of the platform, associated with the ingress controller's external IP.
 - `kafka_fqdn` (String) The FQDN of Kafka running in the platform, associated with the `kafka-external` service IP.
 - `network_id` (String) The virtual switch moref ID for platform cluster nodes.
