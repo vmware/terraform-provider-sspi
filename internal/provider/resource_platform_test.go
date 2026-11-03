@@ -67,6 +67,7 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 			resp[k] = v
 		}
 		resp["id"] = "platform-1"
+		fillServerDefaults(resp)
 		writeJSON(w, http.StatusOK, resp)
 	})
 	mux.HandleFunc("PUT /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +100,53 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// fillServerDefaults mimics the real appliance, which resolves and returns
+// names and defaults the client never sent (e.g. vm_folder_name,
+// cluster_name, addon_ids, preserve_addons) once a platform is deployed. The
+// mock otherwise echoes the request verbatim, which hid the "Provider
+// produced inconsistent result after apply" bug for Optional attributes that
+// were not also Computed.
+func fillServerDefaults(resp map[string]any) {
+	sub := func(key string) map[string]any {
+		m, _ := resp[key].(map[string]any)
+		if m == nil {
+			m = map[string]any{}
+			resp[key] = m
+		}
+		return m
+	}
+	setDefault := func(m map[string]any, k string, v any) {
+		if _, ok := m[k]; !ok {
+			m[k] = v
+		}
+	}
+
+	compute := sub("compute")
+	setDefault(compute, "datacenter_name", "Datacenter-0")
+	setDefault(compute, "cluster_name", "Tenant-Cluster-0")
+	setDefault(compute, "content_datastore_name", "vsanDatastore")
+	setDefault(compute, "storage_policy_name", "vSAN Default Storage Policy")
+	setDefault(compute, "vm_folder_name", "tf-unit-test-platform")
+	setDefault(compute, "vm_template", "tf-unit-test-platform-ssp-node")
+	setDefault(compute, "enable_resource_reservation", false)
+
+	service := sub("service")
+	setDefault(service, "preserve_addons", false)
+	setDefault(service, "addon_ids", []any{"addon-1", "addon-2"})
+	setDefault(service, "ssp_bundle_version", "5.2.0.1")
+
+	if network := sub("network"); network != nil {
+		if ncs, ok := network["network_configs"].([]any); ok {
+			for _, nc := range ncs {
+				if m, ok := nc.(map[string]any); ok {
+					setDefault(m, "network_name", "vsx-network")
+					setDefault(m, "portgroup_name", "vsx-portgroup")
+				}
+			}
+		}
+	}
 }
 
 func testUnitPlatformConfig(host string) string {
@@ -150,7 +198,22 @@ func TestUnitPlatformResource(t *testing.T) {
 					resource.TestCheckResourceAttr("sspi_platform.test", "form_factor", "SMALL"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "worker_count", "3"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "status", "DEPLOYMENT"),
+					// Optional attributes left unset in config but filled in by
+					// the appliance must land in state as computed values.
+					resource.TestCheckResourceAttr("sspi_platform.test", "vm_folder_name", "tf-unit-test-platform"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "cluster_name", "Tenant-Cluster-0"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "datastore", "vsanDatastore"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "storage_policy_name", "vSAN Default Storage Policy"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "network", "vsx-network"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "preserve_addons", "false"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "addon_ids.#", "2"),
 				),
+			},
+			// Re-planning the same config must be empty: the computed values
+			// must not show up as drift.
+			{
+				Config:   testUnitPlatformConfig(srv.URL),
+				PlanOnly: true,
 			},
 			// Update: change worker_count in place; requires the mock's PUT
 			// handler to accept the _revision the resource fetched via GET
