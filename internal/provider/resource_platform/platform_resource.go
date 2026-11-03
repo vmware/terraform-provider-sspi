@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -165,6 +167,10 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 			"datacenter_name": schema.StringAttribute{
 				MarkdownDescription: "The vSphere datacenter name.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"cluster_id": schema.StringAttribute{
 				MarkdownDescription: "The vSphere cluster moref ID.",
@@ -173,6 +179,10 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 			"cluster_name": schema.StringAttribute{
 				MarkdownDescription: "The vSphere cluster name.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"content_datastore_id": schema.StringAttribute{
 				MarkdownDescription: "The vSphere content datastore moref ID.",
@@ -181,26 +191,50 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 			"datastore": schema.StringAttribute{
 				MarkdownDescription: "The vSphere content datastore name.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"storage_policy_id": schema.StringAttribute{
 				MarkdownDescription: "The vSphere storage policy ID.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"storage_policy_name": schema.StringAttribute{
 				MarkdownDescription: "The vSphere storage policy name.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"vm_folder_name": schema.StringAttribute{
 				MarkdownDescription: "The vSphere VM folder to place platform VMs into.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"vm_template": schema.StringAttribute{
 				MarkdownDescription: "The VM template used to provision platform nodes.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"enable_resource_reservation": schema.BoolAttribute{
 				MarkdownDescription: "Whether CPU and memory resources for the instance should be reserved at the resource pool level.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"domain": schema.StringAttribute{
 				MarkdownDescription: "The search domain for the platform (skipped by DNS resolution).",
@@ -222,6 +256,10 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 			"network": schema.StringAttribute{
 				MarkdownDescription: "The name of the virtual switch for platform cluster nodes.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"portgroup_id": schema.StringAttribute{
 				MarkdownDescription: "The portgroup moref ID used for platform cluster nodes.",
@@ -230,6 +268,10 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 			"portgroup_name": schema.StringAttribute{
 				MarkdownDescription: "The portgroup name used for platform cluster nodes.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"platform_default_gateway": schema.StringAttribute{
 				MarkdownDescription: "The default gateway used by the platform nodes.",
@@ -264,15 +306,27 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 			"ssp_bundle_version": schema.StringAttribute{
 				MarkdownDescription: "The version of the software bundle to deploy.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"preserve_addons": schema.BoolAttribute{
 				MarkdownDescription: "Whether to retain compatible add-ons across instance upgrades.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"addon_ids": schema.ListAttribute{
 				MarkdownDescription: "The add-ons to attach to the platform.",
 				ElementType:         types.StringType,
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"admin_password": schema.StringAttribute{
 				MarkdownDescription: "The admin user password for the platform. If unset, the platform default is used.",
