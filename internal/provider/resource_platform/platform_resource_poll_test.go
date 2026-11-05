@@ -243,3 +243,39 @@ func TestWaitForWorkflow_Timeout(t *testing.T) {
 		t.Fatal("expected a timeout error when the workflow never reaches a terminal state, got nil")
 	}
 }
+
+// TestWaitForPrecheck_CompletesBeforeDeployment verifies a PRECHECK_ONLY run is
+// reported done once the precheck workflow is COMPLETED, even though the
+// deployment workflow behind it is only NOT_STARTED (so waitForWorkflow's
+// "last entry COMPLETED" rule would never be satisfied).
+func TestWaitForPrecheck_CompletesBeforeDeployment(t *testing.T) {
+	withFastPlatformPolling(t, 5*time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sspi/platforms/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"phase": "PRECHECK",
+			"workflow_results": []map[string]any{
+				{"display_name": "Precheck Workflow", "type": "PLATFORM_DEPLOYMENT_PRECHECK", "state": "COMPLETED"},
+				{"display_name": "Deployment Workflow", "type": "PLATFORM_DEPLOYMENT", "state": "NOT_STARTED"},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := api_client.NewClientWithResponses(srv.URL)
+	if err != nil {
+		t.Fatalf("failed to create api client: %s", err)
+	}
+	r := &PlatformResource{client: client}
+
+	result, err := r.waitForPrecheck(context.Background(), "platform-1")
+	if err != nil {
+		t.Fatalf("waitForPrecheck: %s", err)
+	}
+	if result == nil || result.DisplayName == nil || *result.DisplayName != "Precheck Workflow" {
+		t.Fatalf("expected the precheck workflow result, got %+v", result)
+	}
+}

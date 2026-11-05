@@ -108,6 +108,7 @@ type PlatformResourceModel struct {
 	AdminPassword    types.String `tfsdk:"admin_password"`
 	AuditPassword    types.String `tfsdk:"audit_password"`
 	ForceDelete      types.Bool   `tfsdk:"force_delete"`
+	PrecheckOnly     types.Bool   `tfsdk:"precheck_only"`
 
 	Status types.String `tfsdk:"status"`
 }
@@ -344,6 +345,13 @@ func (r *PlatformResource) Schema(ctx context.Context, req resource.SchemaReques
 					"cleanup failures. Has no effect other than on `Delete`.",
 				Optional: true,
 			},
+			"precheck_only": schema.BoolAttribute{
+				MarkdownDescription: "When `true`, only the deployment precheck is run (`desired_state = PRECHECK_ONLY`): " +
+					"the configuration is saved and validated (DNS, NTP, network, vCenter, and so on) but nothing is deployed. " +
+					"Changing it to `false` (or removing it) on an existing precheck-only platform starts the deployment " +
+					"(`CONTINUE`) with the saved configuration. Defaults to `false`, which runs the precheck and the deployment.",
+				Optional: true,
+			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "The current deployment status.",
 				Computed:            true,
@@ -553,6 +561,17 @@ func int64PtrToIntPtr(v types.Int64) *int {
 // entry for the next stage), the last entry reaches a successful terminal
 // state, or platformPollTimeout elapses.
 func (r *PlatformResource) waitForWorkflow(ctx context.Context, platformID string) (*api_client.WorkflowResult, error) {
+	return r.waitForWorkflowUntil(ctx, platformID, false)
+}
+
+// waitForPrecheck is waitForWorkflow for a PRECHECK_ONLY run: it returns as soon
+// as the precheck workflow itself is COMPLETED, because the appliance does not
+// start (and may only list as NOT_STARTED) the deployment workflow after it.
+func (r *PlatformResource) waitForPrecheck(ctx context.Context, platformID string) (*api_client.WorkflowResult, error) {
+	return r.waitForWorkflowUntil(ctx, platformID, true)
+}
+
+func (r *PlatformResource) waitForWorkflowUntil(ctx context.Context, platformID string, precheckOnly bool) (*api_client.WorkflowResult, error) {
 	deadline := time.Now().Add(platformPollTimeout)
 	for {
 		if time.Now().After(deadline) {
@@ -596,8 +615,16 @@ func (r *PlatformResource) waitForWorkflow(ctx context.Context, platformID strin
 				}
 			}
 
+			if precheckOnly {
+				for _, wr := range *results {
+					if isPrecheckWorkflow(wr) && wr.State != nil && *wr.State == api_client.WorkflowResultStateCOMPLETED {
+						return &wr, nil
+					}
+				}
+			}
+
 			latest := (*results)[len(*results)-1]
-			if latest.State != nil {
+			if !precheckOnly && latest.State != nil {
 				switch *latest.State {
 				case api_client.WorkflowResultStateCOMPLETED,
 					api_client.WorkflowResultStateROLLBACKCOMPLETED:
@@ -612,6 +639,15 @@ func (r *PlatformResource) waitForWorkflow(ctx context.Context, platformID strin
 		case <-time.After(platformPollInterval):
 		}
 	}
+}
+
+// isPrecheckWorkflow reports whether a workflow result is a precheck (as opposed
+// to a deployment, update or delete workflow).
+func isPrecheckWorkflow(result api_client.WorkflowResult) bool {
+	if result.Type == nil {
+		return false
+	}
+	return *result.Type == api_client.PLATFORMDEPLOYMENTPRECHECK || *result.Type == api_client.CONFIGUPDATEPRECHECK
 }
 
 // hasFailedJob reports whether any job within a workflow result has reached a
@@ -698,7 +734,13 @@ func (r *PlatformResource) Create(ctx context.Context, req resource.CreateReques
 		data.SspType = types.StringValue("ATP")
 	}
 
-	createPayload, diags := r.buildPlatformPayload(ctx, &data, api_client.START)
+	precheckOnly := data.PrecheckOnly.ValueBool()
+	desiredState := api_client.START
+	if precheckOnly {
+		desiredState = api_client.PRECHECKONLY
+	}
+
+	createPayload, diags := r.buildPlatformPayload(ctx, &data, desiredState)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -723,8 +765,13 @@ func (r *PlatformResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	tflog.Debug(ctx, "Waiting for SSP Platform deployment workflow to complete", map[string]interface{}{"id": data.ID.ValueString()})
-	result, err := r.waitForWorkflow(ctx, data.ID.ValueString())
+	tflog.Debug(ctx, "Waiting for SSP Platform deployment workflow to complete", map[string]interface{}{"id": data.ID.ValueString(), "precheck_only": precheckOnly})
+	var result *api_client.WorkflowResult
+	if precheckOnly {
+		result, err = r.waitForPrecheck(ctx, data.ID.ValueString())
+	} else {
+		result, err = r.waitForWorkflow(ctx, data.ID.ValueString())
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for SSP Platform deployment",
@@ -733,9 +780,13 @@ func (r *PlatformResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 	if err := checkWorkflowResult(result); err != nil {
+		detail := err.Error()
+		if precheckOnly {
+			detail += fmt.Sprintf("\n\nThe saved platform %s was left on the appliance; delete it (DELETE /sspi/platforms/%s) before retrying.", data.ID.ValueString(), data.ID.ValueString())
+		}
 		resp.Diagnostics.AddError(
 			"SSP Platform deployment failed",
-			err.Error(),
+			detail,
 		)
 		return
 	}
@@ -916,9 +967,10 @@ func ipPoolsToList(ctx context.Context, pools []api_client.IpPool, diags *diag.D
 }
 
 func (r *PlatformResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var data PlatformResourceModel
+	var data, prior PlatformResourceModel
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -935,7 +987,18 @@ func (r *PlatformResource) Update(ctx context.Context, req resource.UpdateReques
 	// START saves the configuration and (re-)runs the precheck/LCM workflow;
 	// on an already-deployed platform this drives the UPDATE_PRECHECK/UPDATE
 	// phases rather than a fresh deployment.
-	updatePayload, diags := r.buildPlatformPayload(ctx, &data, api_client.START)
+	//
+	// precheck_only = true re-runs just the precheck; leaving precheck_only on a
+	// platform that only had its precheck run starts the saved deployment (CONTINUE).
+	precheckOnly := data.PrecheckOnly.ValueBool()
+	desiredState := api_client.START
+	switch {
+	case precheckOnly:
+		desiredState = api_client.PRECHECKONLY
+	case prior.PrecheckOnly.ValueBool():
+		desiredState = api_client.CONTINUE
+	}
+	updatePayload, diags := r.buildPlatformPayload(ctx, &data, desiredState)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -975,7 +1038,12 @@ func (r *PlatformResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	tflog.Debug(ctx, "Waiting for SSP Platform update workflow to complete", map[string]interface{}{"id": data.ID.ValueString()})
-	result, err := r.waitForWorkflow(ctx, data.ID.ValueString())
+	var result *api_client.WorkflowResult
+	if precheckOnly {
+		result, err = r.waitForPrecheck(ctx, data.ID.ValueString())
+	} else {
+		result, err = r.waitForWorkflow(ctx, data.ID.ValueString())
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for SSP Platform update",
