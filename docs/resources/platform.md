@@ -44,8 +44,10 @@ Manages a Security Service Platform (SSP) or Avi Operations instance deployment.
 - `datacenter_name` (String) The vSphere datacenter name.
 - `datastore` (String) The vSphere content datastore name.
 - `enable_resource_reservation` (Boolean) Whether CPU and memory resources for the instance should be reserved at the resource pool level.
+- `force_delete` (Boolean) When `true`, deletion passes `action=force_delete`, bypassing graceful teardown steps and forcibly deleting the platform deployment and database records, ignoring standard cleanup failures. Has no effect other than on `Delete`.
 - `network` (String) The name of the virtual switch for platform cluster nodes.
 - `portgroup_name` (String) The portgroup name used for platform cluster nodes.
+- `precheck_only` (Boolean) When `true`, only the deployment precheck is run (`desired_state = PRECHECK_ONLY`): the configuration is saved and validated (DNS, NTP, network, vCenter, and so on) but nothing is deployed. Changing it to `false` (or removing it) on an existing precheck-only platform starts the deployment (`CONTINUE`) with the saved configuration. Defaults to `false`, which runs the precheck and the deployment.
 - `preserve_addons` (Boolean) Whether to retain compatible add-ons across instance upgrades.
 - `ssp_bundle_version` (String) The version of the software bundle to deploy.
 - `ssp_type` (String) The type of SSP deployment. One of `ATP`, `LICENSING`, `AVI_OPERATIONS`. Defaults to `ATP`.
