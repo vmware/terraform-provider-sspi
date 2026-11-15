@@ -8,7 +8,7 @@ Please read our [Developer Certificate of Origin](https://cla.vmware.com/dco). A
 
 ## Getting Started
 
-1. Ensure you have Go 1.22+ installed.
+1. Ensure you have Go 1.26.11+ installed.
 2. Clone the repository.
 3. Run `make build` to compile the provider binary.
 4. Run `make fmt` and `make docs-lint-fix` before opening a pull request.
