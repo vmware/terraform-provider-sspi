@@ -26,7 +26,7 @@ architecture and the cross-provider dependency model.
 | Dependency | Version |
 | --- | --- |
 | [Terraform](https://developer.hashicorp.com/terraform/downloads) | ≥ 1.5 |
-| [Go](https://go.dev/dl/) | ≥ 1.21 (only for building from source) |
+| [Go](https://go.dev/dl/) | 1.26.11 (only for building from source) |
 | SSPI Appliance | 5.2, accessible over HTTPS (`port 443`), admin credentials available |
 
 ---

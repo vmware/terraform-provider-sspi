@@ -8,7 +8,7 @@ Instructions for building and developing the **Terraform Provider for VMware Sec
 
 Before building the provider, ensure you have installed:
 
-- [Go](https://go.dev/dl/) ≥ 1.21 (1.25+ recommended)
+- [Go](https://go.dev/dl/) ≥ 1.26.11+
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) ≥ 1.5 (for local testing with HCL configurations)
 - [Git](https://git-scm.com/)
 
