@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // platformMockAPI simulates the subset of the SSPI appliance platform-LCM
@@ -27,9 +29,31 @@ type platformMockAPI struct {
 	mu     sync.Mutex
 	exists bool
 	body   map[string]any
+	// desiredStates records the desired_state of every POST/PUT, in order.
+	desiredStates []string
+}
+
+func (m *platformMockAPI) recordDesiredState(body map[string]any) {
+	ds, _ := body["desired_state"].(string)
+	m.desiredStates = append(m.desiredStates, ds)
+}
+
+func (m *platformMockAPI) lastDesiredState() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.desiredStates) == 0 {
+		return ""
+	}
+	return m.desiredStates[len(m.desiredStates)-1]
 }
 
 func newPlatformMockServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv, _ := newPlatformMockServerWithAPI(t)
+	return srv
+}
+
+func newPlatformMockServerWithAPI(t *testing.T) (*httptest.Server, *platformMockAPI) {
 	t.Helper()
 	m := &platformMockAPI{}
 
@@ -53,6 +77,7 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 		m.exists = true
 		m.body = readBody(r)
 		m.body["_revision"] = 0
+		m.recordDesiredState(m.body)
 		writeJSON(w, http.StatusAccepted, map[string]any{"id": "platform-1"})
 	})
 	mux.HandleFunc("GET /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +92,7 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 			resp[k] = v
 		}
 		resp["id"] = "platform-1"
+		fillServerDefaults(resp)
 		writeJSON(w, http.StatusOK, resp)
 	})
 	mux.HandleFunc("PUT /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +105,7 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 			updated["_revision"] = 1
 		}
 		m.body = updated
+		m.recordDesiredState(updated)
 		writeJSON(w, http.StatusAccepted, map[string]any{"id": "platform-1"})
 	})
 	mux.HandleFunc("DELETE /sspi/platforms/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +115,18 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 		writeJSON(w, http.StatusAccepted, map[string]any{"id": "platform-1"})
 	})
 	mux.HandleFunc("GET /sspi/platforms/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		if m.lastDesiredState() == "PRECHECK_ONLY" {
+			// A precheck-only run completes the precheck workflow and leaves the
+			// deployment workflow listed but not started.
+			writeJSON(w, http.StatusOK, map[string]any{
+				"phase": "PRECHECK",
+				"workflow_results": []map[string]any{
+					{"display_name": "Precheck Workflow", "type": "PLATFORM_DEPLOYMENT_PRECHECK", "state": "COMPLETED"},
+					{"display_name": "Deployment Workflow", "type": "PLATFORM_DEPLOYMENT", "state": "NOT_STARTED"},
+				},
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"phase": "DEPLOYMENT",
 			"workflow_results": []map[string]any{
@@ -98,7 +137,54 @@ func newPlatformMockServer(t *testing.T) *httptest.Server {
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, m
+}
+
+// fillServerDefaults mimics the real appliance, which resolves and returns
+// names and defaults the client never sent (e.g. vm_folder_name,
+// cluster_name, addon_ids, preserve_addons) once a platform is deployed. The
+// mock otherwise echoes the request verbatim, which hid the "Provider
+// produced inconsistent result after apply" bug for Optional attributes that
+// were not also Computed.
+func fillServerDefaults(resp map[string]any) {
+	sub := func(key string) map[string]any {
+		m, _ := resp[key].(map[string]any)
+		if m == nil {
+			m = map[string]any{}
+			resp[key] = m
+		}
+		return m
+	}
+	setDefault := func(m map[string]any, k string, v any) {
+		if _, ok := m[k]; !ok {
+			m[k] = v
+		}
+	}
+
+	compute := sub("compute")
+	setDefault(compute, "datacenter_name", "Datacenter-0")
+	setDefault(compute, "cluster_name", "Tenant-Cluster-0")
+	setDefault(compute, "content_datastore_name", "vsanDatastore")
+	setDefault(compute, "storage_policy_name", "vSAN Default Storage Policy")
+	setDefault(compute, "vm_folder_name", "tf-unit-test-platform")
+	setDefault(compute, "vm_template", "tf-unit-test-platform-ssp-node")
+	setDefault(compute, "enable_resource_reservation", false)
+
+	service := sub("service")
+	setDefault(service, "preserve_addons", false)
+	setDefault(service, "addon_ids", []any{"addon-1", "addon-2"})
+	setDefault(service, "ssp_bundle_version", "5.2.0.1")
+
+	if network := sub("network"); network != nil {
+		if ncs, ok := network["network_configs"].([]any); ok {
+			for _, nc := range ncs {
+				if m, ok := nc.(map[string]any); ok {
+					setDefault(m, "network_name", "vsx-network")
+					setDefault(m, "portgroup_name", "vsx-portgroup")
+				}
+			}
+		}
+	}
 }
 
 func testUnitPlatformConfig(host string) string {
@@ -110,7 +196,7 @@ func testUnitPlatformConfigWithWorkerCount(host string, workerCount int) string 
 resource "sspi_platform" "test" {
   provider_id              = "vsphere-provider-1"
   display_name             = "tf-unit-test-platform"
-  form_factor              = "COMPACT"
+  form_factor              = "SMALL"
   ssp_type                 = "ATP"
   worker_count             = %d
   controller_count         = 3
@@ -147,10 +233,25 @@ func TestUnitPlatformResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("sspi_platform.test", "id", "platform-1"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "provider_id", "vsphere-provider-1"),
-					resource.TestCheckResourceAttr("sspi_platform.test", "form_factor", "COMPACT"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "form_factor", "SMALL"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "worker_count", "3"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "status", "DEPLOYMENT"),
+					// Optional attributes left unset in config but filled in by
+					// the appliance must land in state as computed values.
+					resource.TestCheckResourceAttr("sspi_platform.test", "vm_folder_name", "tf-unit-test-platform"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "cluster_name", "Tenant-Cluster-0"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "datastore", "vsanDatastore"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "storage_policy_name", "vSAN Default Storage Policy"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "network", "vsx-network"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "preserve_addons", "false"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "addon_ids.#", "2"),
 				),
+			},
+			// Re-planning the same config must be empty: the computed values
+			// must not show up as drift.
+			{
+				Config:   testUnitPlatformConfig(srv.URL),
+				PlanOnly: true,
 			},
 			// Update: change worker_count in place; requires the mock's PUT
 			// handler to accept the _revision the resource fetched via GET
@@ -160,6 +261,53 @@ func TestUnitPlatformResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("sspi_platform.test", "id", "platform-1"),
 					resource.TestCheckResourceAttr("sspi_platform.test", "worker_count", "5"),
+				),
+			},
+		},
+	})
+}
+
+// TestUnitPlatformResource_PrecheckOnly runs only the precheck
+// (desired_state=PRECHECK_ONLY), then flips precheck_only off to start the saved
+// deployment (CONTINUE).
+func TestUnitPlatformResource_PrecheckOnly(t *testing.T) {
+	srv, m := newPlatformMockServerWithAPI(t)
+
+	precheckConfig := strings.Replace(testUnitPlatformConfig(srv.URL),
+		`ssp_bundle_id             = "bundle-1"`,
+		`ssp_bundle_id             = "bundle-1"
+  precheck_only             = true`, 1)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: precheckConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("sspi_platform.test", "id", "platform-1"),
+					resource.TestCheckResourceAttr("sspi_platform.test", "precheck_only", "true"),
+					func(*terraform.State) error {
+						if got := m.lastDesiredState(); got != "PRECHECK_ONLY" {
+							return fmt.Errorf("desired_state after create = %q, want PRECHECK_ONLY", got)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				Config:   precheckConfig,
+				PlanOnly: true,
+			},
+			{
+				Config: testUnitPlatformConfig(srv.URL),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("sspi_platform.test", "precheck_only"),
+					func(*terraform.State) error {
+						if got := m.lastDesiredState(); got != "CONTINUE" {
+							return fmt.Errorf("desired_state after precheck_only removed = %q, want CONTINUE", got)
+						}
+						return nil
+					},
 				),
 			},
 		},

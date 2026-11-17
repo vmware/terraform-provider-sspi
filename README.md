@@ -26,7 +26,7 @@ architecture and the cross-provider dependency model.
 | Dependency | Version |
 | --- | --- |
 | [Terraform](https://developer.hashicorp.com/terraform/downloads) | ≥ 1.5 |
-| [Go](https://go.dev/dl/) | ≥ 1.21 (only for building from source) |
+| [Go](https://go.dev/dl/) | 1.26.11 (only for building from source) |
 | SSPI Appliance | 5.2, accessible over HTTPS (`port 443`), admin credentials available |
 
 ---
@@ -116,7 +116,7 @@ resource "sspi_platform" "ssp_cluster" {
   provider_id          = sspi_vsphere_provider.vc01.id
   display_name         = "Production-SSP-Cluster"
   ssp_type             = "ATP"
-  form_factor          = "MEDIUM" # real enum: COMPACT | MEDIUM | LARGE | EXTRA_LARGE
+  form_factor          = "MEDIUM" # real enum: SMALL | MEDIUM | LARGE | EXTRA_LARGE
   worker_count         = 3
   domain               = "corp.local"
   datacenter_id        = "datacenter-1"
