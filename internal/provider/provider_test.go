@@ -3,25 +3,20 @@
 
 // Package provider_test holds this provider's acceptance and unit tests.
 //
-// Acceptance test scope (honest statement, since the *_acc_test.go file
-// names alone don't make this obvious): every TestAcc* test in this package
-// today (TestAccPlatformDataSource, TestAccVsphereProviderDataSource,
-// TestAccBundleDataSource) is a read-only lookup of a resource that already
-// exists in whichever SSPI lab environment CI points at. None of them
-// exercise a full Create→Update→Destroy lifecycle for any sspi_* resource.
+// Acceptance test scope: the data sources (platform, vsphere_provider,
+// bundle, role_binding, upgrade_packages) are read-only lookups against
+// whatever exists in the SSPI lab CI points at. Most resources also have
+// live lifecycle tests (create, update, import, idempotency, destroy), each
+// skipped unless its own env vars are set; destructive ones (platform,
+// vsphere_provider, restore, upgrade, user_password, role_binding) need an
+// explicit SSP_TEST_ALLOW_* opt-in. See the doc comment on each test for its
+// prerequisites and side effects.
 //
-// This is deliberate, not an oversight: sspi_platform (the resource with the
-// most to gain from acceptance testing) provisions a real Kubernetes cluster
-// on real vSphere infrastructure and can take 30-90 minutes per apply/destroy
-// cycle (see the FSDD's async-operations risk note); sspi_vsphere_provider
-// and sspi_installer_bundle_local likewise require, respectively, a real
-// vCenter endpoint and a multi-GB package file. Full resource-CRUD
-// acceptance testing for these is not implemented — it would require a
-// dedicated, disposable SSPI lab environment and a CI budget this provider
-// does not currently have, not a testing gap that's simply unaddressed.
-// Resource-level correctness is instead covered by the mocked-HTTP unit
-// tests (TestUnit*) in this package, which do exercise full CRUD against a
-// fake server.
+// Known gaps: sspi_platform scaling and force_delete, sspi_restore
+// replacement and force_restore, and a LOCAL_USER sspi_role_binding resource
+// are not covered because they would be destructive or take hours. The
+// mocked-HTTP unit tests (TestUnit*) in this package cover full CRUD against
+// a fake server.
 package provider_test
 
 import (
