@@ -37,6 +37,12 @@ linters:
       - linters:
           - gosec
         text: G402|G404|G115
+      # Acceptance tests: G101 flags env var *names* (e.g. SSP_TEST_*_PASSWORD),
+      # and G703/G704 flag file paths and endpoints taken from operator-set env vars.
+      - linters:
+          - gosec
+        path: _test\.go
+        text: G101|G703|G704
       - linters:
           - staticcheck
         text: QF1001

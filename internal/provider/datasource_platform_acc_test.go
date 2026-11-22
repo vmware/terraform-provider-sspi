@@ -35,6 +35,10 @@ func TestAccPlatformDataSource(t *testing.T) {
 				Config: testAccPlatformDataSourceConfig(id),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "id", id),
+					resource.TestCheckResourceAttrSet(resourceName, "cluster_name"),
+					resource.TestCheckResourceAttrSet(resourceName, "datastore"),
+					resource.TestCheckResourceAttrSet(resourceName, "domain"),
+					resource.TestCheckResourceAttrSet(resourceName, "status"),
 				),
 			},
 		},

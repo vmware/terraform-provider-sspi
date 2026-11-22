@@ -35,6 +35,8 @@ func TestAccBundleDataSource(t *testing.T) {
 				Config: testAccBundleDataSourceConfig(id),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "id", id),
+					resource.TestCheckResourceAttrSet(resourceName, "status"),
+					resource.TestCheckResourceAttrSet(resourceName, "version"),
 				),
 			},
 		},
