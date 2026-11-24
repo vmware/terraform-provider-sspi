@@ -46,11 +46,11 @@ var (
 // platformPollInterval and platformPollTimeout are vars, not consts, so unit
 // tests in this package can temporarily shrink them (save/restore) to
 // exercise the multi-iteration polling loop and deadline logic in
-// waitForWorkflow/Delete in milliseconds instead of the real 15s/90min
+// waitForWorkflow/Delete in milliseconds instead of the real 15s/180min
 // production values.
 var (
 	platformPollInterval = 15 * time.Second
-	platformPollTimeout  = 90 * time.Minute
+	platformPollTimeout  = 180 * time.Minute
 )
 
 // NewPlatformResource is a helper function to simplify the provider implementation.
