@@ -25,7 +25,7 @@ import (
 //   - Every apply/destroy provisions/tears down a real Kubernetes cluster on
 //     real vSphere infra. Per the FSDD's async-operations risk note, each of
 //     Create/Update/Delete can individually take up to platformPollTimeout
-//     (90 minutes in production), so a full run of this test can take
+//     (180 minutes in production), so a full run of this test can take
 //     multiple hours.
 //   - It consumes real compute/storage/IP/DNS resources in whichever lab
 //     SSPI_HOST points at. The IP pools, FQDNs, and display name below MUST

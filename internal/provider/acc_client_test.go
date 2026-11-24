@@ -239,7 +239,7 @@ func testAccDeleteExistingVsphereProviders(t *testing.T) {
 }
 
 // platformPollTimeoutForTests mirrors the resource_platform package's own
-// platformPollTimeout (90 minutes in production). It's redeclared here
+// platformPollTimeout (180 minutes in production). It's redeclared here
 // rather than imported since that identifier lives in an internal package
 // this test binary doesn't import.
-const platformPollTimeoutForTests = 90 * time.Minute
+const platformPollTimeoutForTests = 180 * time.Minute
