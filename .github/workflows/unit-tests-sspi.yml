@@ -1,5 +1,5 @@
 ---
-name: Unit Tests (sspi)
+name: Unit Tests
 
 on:
   pull_request:
@@ -18,13 +18,14 @@ permissions:
 
 jobs:
   unit-test:
+    name: Run Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Run unit tests
+        uses: $/.github/actions/setup-go
+      - name: Run Unit Tests
         run: |
           set -euo pipefail
           go test ./internal/... -v -tags=unittest -count=1 -coverprofile=coverage.out -coverpkg=./internal/...

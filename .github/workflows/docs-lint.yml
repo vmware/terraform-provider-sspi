@@ -1,5 +1,5 @@
 ---
-name: docs-lint
+name: Lint (Documentation)
 
 on:
   pull_request:
@@ -9,14 +9,15 @@ permissions:
 
 jobs:
   lint:
+    name: Run Linters
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Docs Lint
-        uses: DavidAnson/markdownlint-cli2-action@v24
+        uses: $/.github/actions/setup-go
+      - name: Run Linters
+        uses: DavidAnson/markdownlint-cli2-action@v25.1.0
         with:
           config: '.markdownlint.jsonc'
           globs: |

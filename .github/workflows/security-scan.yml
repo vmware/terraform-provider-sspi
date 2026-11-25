@@ -1,5 +1,5 @@
 ---
-name: security-scan
+name: Security Scan
 
 on:
   pull_request:
@@ -24,13 +24,12 @@ permissions:
 
 jobs:
   trivy:
-    name: Trivy scan
+    name: Run Security Scans
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Scan Go modules for vulnerabilities
+        uses: actions/checkout@v7.0.1
+      - name: Scan Go Modules for Vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
@@ -38,8 +37,7 @@ jobs:
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-
-      - name: Scan for hardcoded secrets
+      - name: Scan for Hardcoded Secrets
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs

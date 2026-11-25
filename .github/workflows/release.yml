@@ -1,15 +1,4 @@
 ---
-# TODO(registry publishing): this workflow has never fired -- sspi is not
-# published on registry.terraform.io yet and no version tag has been pushed.
-# Before pushing a first version tag, confirm:
-#   1. GPG_PRIVATE_KEY/GPG_PASSPHRASE secrets below are actually set for
-#      this repo (not just copied from another provider's workflow).
-#   2. The matching GPG public key is registered on the vmware publisher
-#      account at registry.terraform.io.
-#   3. The Registry's GitHub App has access to this specific repo, and
-#      someone with vmware-publisher access has done the one-time
-#      "Publish -> Provider" link for it (first-time providers need this
-#      before the Registry will index new releases).
 name: Release
 
 on:
@@ -23,24 +12,25 @@ permissions:
 
 jobs:
   release:
+    name: Run Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Setup Go
-        uses: ./.github/actions/setup-go
+        uses: $/.github/actions/setup-go
       - name: Run Linters
-        uses: ./.github/actions/golangci-lint
+        uses: $/.github/actions/golangci-lint
       - name: Import GPG Key
         id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@v7
+        uses: crazy-max/ghaction-import-gpg@v7.0.0
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+      - name: Run Release
+        uses: goreleaser/goreleaser-action@v7.3.0
         with:
           version: latest
           args: release --clean --timeout 60m --release-header-tmpl .goreleaser.tmpl
