@@ -1,5 +1,5 @@
 ---
-name: Formatting check (sspi)
+name: Formatting Check
 
 on:
   pull_request:
@@ -18,11 +18,12 @@ permissions:
 
 jobs:
   fmt-test:
+    name: Run Formatting Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Run formatting tests
+        uses: $/.github/actions/setup-go
+      - name: Run Formatting Tests
         run: make fmtcheck
